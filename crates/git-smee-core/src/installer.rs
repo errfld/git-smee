@@ -1,8 +1,6 @@
-use std::{fs, path::PathBuf};
-
-use thiserror::Error;
-
 use crate::SmeeConfig;
+use std::{fs, path::PathBuf};
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -27,12 +25,11 @@ pub struct FileSystemHookInstaller {
 
 impl FileSystemHookInstaller {
     const HOOKS_DIR: &str = ".git/hooks";
-    pub fn new(hooks_path: Option<&str>) -> Result<Self, Error> {
-        let hooks_path = match hooks_path {
-            Some(path) => PathBuf::from(path),
-            None => PathBuf::from(Self::HOOKS_DIR),
-        };
+    pub fn from_default() -> Result<Self, Error> {
+        Self::from_path(PathBuf::from(Self::HOOKS_DIR))
+    }
 
+    pub fn from_path(hooks_path: PathBuf) -> Result<Self, Error> {
         if !hooks_path.exists() || !hooks_path.is_dir() {
             return Err(Error::HooksDirNotFound(
                 hooks_path.to_string_lossy().to_string(),
