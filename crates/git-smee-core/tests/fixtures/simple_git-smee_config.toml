@@ -1,0 +1,8 @@
+[[pre-commit]]
+command = "echo 'running pre commit 1 from git-smee'"
+
+[[pre-commit]]
+command = "echo 'running pre commit 2 from git-smee'"
+
+[[pre-push]]
+command = "echo 'running pre push 1 from git-smee'"
