@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{collections::HashMap, fs, path::Path};
 
 use serde::Deserialize;
@@ -63,6 +64,34 @@ pub enum LifeCyclePhase {
 
     #[serde(other)]
     Unknown,
+}
+
+impl fmt::Display for LifeCyclePhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            LifeCyclePhase::ApplypatchMsg => "applypatch-msg",
+            LifeCyclePhase::PreApplypatch => "pre-applypatch",
+            LifeCyclePhase::PostApplypatch => "post-applypatch",
+            LifeCyclePhase::PreCommit => "pre-commit",
+            LifeCyclePhase::PrepareCommitMsg => "prepare-commit-msg",
+            LifeCyclePhase::CommitMsg => "commit-msg",
+            LifeCyclePhase::PostCommit => "post-commit",
+            LifeCyclePhase::PreMergeCommit => "pre-merge-commit",
+            LifeCyclePhase::PreRebase => "pre-rebase",
+            LifeCyclePhase::PostCheckout => "post-checkout",
+            LifeCyclePhase::PostMerge => "post-merge",
+            LifeCyclePhase::PostRewrite => "post-rewrite",
+            LifeCyclePhase::PrePush => "pre-push",
+            LifeCyclePhase::ReferenceTransaction => "reference-transaction",
+            LifeCyclePhase::PushToCheckout => "push-to-checkout",
+            LifeCyclePhase::PreAutoGc => "pre-auto-gc",
+            LifeCyclePhase::PostUpdate => "post-update",
+            LifeCyclePhase::FsmonitorWatchman => "fsmonitor-watchman",
+            LifeCyclePhase::PostIndexChange => "post-index-change",
+            LifeCyclePhase::Unknown => "unknown",
+        };
+        f.write_str(s)
+    }
 }
 
 #[derive(Debug, Error)]
