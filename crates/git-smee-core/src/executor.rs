@@ -31,3 +31,53 @@ pub fn execute_hook(smee_config: &SmeeConfig, phase: LifeCyclePhase) -> Result<(
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn given_empty_smee_config_when_executing_hook_then_no_hooks_configured_error() {
+        let config = SmeeConfig {
+            hooks: std::collections::HashMap::new(),
+        };
+
+        let result = execute_hook(&config, LifeCyclePhase::PreCommit);
+        assert!(matches!(
+            result,
+            Err(Error::NoHooksConfigured(LifeCyclePhase::PreCommit))
+        ));
+    }
+
+    #[test]
+    fn given_simple_smee_config_when_executing_hook_then_command_executed() {
+        let mut hooks_map = std::collections::HashMap::new();
+        hooks_map.insert(
+            LifeCyclePhase::PreCommit,
+            vec![crate::config::HookDefinition {
+                command: "echo Pre-commit hook executed".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks: hooks_map };
+
+        let result = execute_hook(&config, LifeCyclePhase::PreCommit);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn given_invalid_command_when_executing_hook_then_execution_failed_error() {
+        let mut hooks_map = std::collections::HashMap::new();
+        hooks_map.insert(
+            LifeCyclePhase::PreCommit,
+            vec![crate::config::HookDefinition {
+                command: "nonexistent_command".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks: hooks_map };
+
+        let result = execute_hook(&config, LifeCyclePhase::PreCommit);
+        assert!(matches!(result, Err(Error::NonSuccessfulExitStatus(_))));
+    }
+}
