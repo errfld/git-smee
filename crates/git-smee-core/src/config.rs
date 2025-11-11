@@ -39,7 +39,7 @@ pub struct HookDefinition {
     pub parallel_execution_allowed: bool,
 }
 
-#[derive(Deserialize, PartialEq, Eq, Hash)]
+#[derive(Deserialize, PartialEq, Eq, Hash, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum LifeCyclePhase {
     ApplypatchMsg,

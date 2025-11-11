@@ -25,6 +25,11 @@ pub struct FileSystemHookInstaller {
 
 impl FileSystemHookInstaller {
     const HOOKS_DIR: &str = ".git/hooks";
+
+    pub fn new() -> Result<Self, Error> {
+        Self::from_default()
+    }
+
     pub fn from_default() -> Result<Self, Error> {
         Self::from_path(PathBuf::from(Self::HOOKS_DIR))
     }
@@ -35,7 +40,6 @@ impl FileSystemHookInstaller {
                 hooks_path.to_string_lossy().to_string(),
             ));
         }
-
         Ok(Self { hooks_path })
     }
 }

@@ -19,6 +19,7 @@ fn given_simple_config_when_installing_hooks_then_no_error() {
     let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf()).unwrap();
     // when
     let result = installer::install_hooks(&config, &installer);
+
     // then
     assert!(result.is_ok());
     let hook = temp_dir.path().join("pre-commit");
