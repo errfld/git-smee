@@ -1,4 +1,4 @@
-use crate::SmeeConfig;
+use crate::{SmeeConfig, platform::Platform};
 use std::{fs, path::PathBuf};
 use thiserror::Error;
 
@@ -13,10 +13,12 @@ pub enum Error {
     #[error("Failed to write hook: {0}")]
     FailedToWriteHook(#[from] std::io::Error),
     // add installer-specific errors here later
+    #[error("A platform-specific error occurred: {0}")]
+    PlatformError(#[from] crate::platform::Error),
 }
 
 pub trait HookInstaller {
-    fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<(), Error>;
+    fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error>;
 }
 
 pub struct FileSystemHookInstaller {
@@ -45,9 +47,10 @@ impl FileSystemHookInstaller {
 }
 
 impl HookInstaller for FileSystemHookInstaller {
-    fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<(), Error> {
+    fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
         let hook_file = self.hooks_path.join(hook_name);
-        fs::write(hook_file, hook_content).map_err(Error::FailedToWriteHook)
+        fs::write(&hook_file, hook_content).map_err(Error::FailedToWriteHook)?;
+        Ok(hook_file)
     }
 }
 
@@ -58,24 +61,25 @@ pub fn install_hooks<T: HookInstaller>(
     if config.hooks.is_empty() {
         return Err(Error::NoHooksPresent);
     }
+    let platform = Platform::current();
     config
         .hooks
         .keys()
         .map(|life_cycle_phase| {
             let lifecycle_phase_kebap = life_cycle_phase.to_string();
-            let content = HOOK_TEMPLATE.replace("{hook}", &lifecycle_phase_kebap);
-            hook_installer.install_hook(&lifecycle_phase_kebap, &content)
+            let content = platform
+                .hook_script_template()
+                .replace("{hook}", &lifecycle_phase_kebap);
+            let hook_path = hook_installer.install_hook(&lifecycle_phase_kebap, &content)?;
+            platform
+                .make_executable(&hook_path)
+                .map_err(Error::PlatformError)?;
+            Ok(())
         })
         .collect::<Result<Vec<_>, Error>>()?;
+
     Ok(())
 }
-
-const HOOK_TEMPLATE: &str = r#"#!/usr/bin/env sh
-#DO NOT MODIFY THIS FILE DIRECTLY
-#THIS FILE IS MANAGED BY GIT-SMEE
-  set -e
-  git smee run {hook}
-  "#;
 
 #[cfg(test)]
 mod tests {
@@ -86,14 +90,17 @@ mod tests {
     struct AssertingHookInstaller {
         assertion: fn(hook_name: &str, hook_content: &str) -> (),
         number_of_installed_hooks: AtomicU8,
+        temp_dir: tempfile::TempDir,
     }
 
     impl HookInstaller for AssertingHookInstaller {
-        fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<(), Error> {
+        fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
             (self.assertion)(hook_name, hook_content);
             self.number_of_installed_hooks
                 .fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            let hook = self.temp_dir.path().join(hook_name);
+            fs::write(&hook, hook_content).unwrap();
+            Ok(hook)
         }
     }
 
@@ -106,6 +113,7 @@ mod tests {
         let installer = AssertingHookInstaller {
             assertion: |_, _| panic!("No hooks should be installed"),
             number_of_installed_hooks: AtomicU8::new(0),
+            temp_dir: tempfile::tempdir().unwrap(),
         };
 
         let result = install_hooks(&config, &installer);
@@ -134,9 +142,13 @@ mod tests {
                 assert!(hook_content.contains("git smee run pre-commit"));
             },
             number_of_installed_hooks: AtomicU8::new(0),
+            temp_dir: tempfile::tempdir().unwrap(),
         };
 
         let result = install_hooks(&config, &installer);
+        if let Err(err) = &result {
+            println!("Error installing hooks: {err:?}");
+        }
         assert!(result.is_ok());
         assert_eq!(
             installer.number_of_installed_hooks.load(Ordering::SeqCst),
@@ -173,6 +185,7 @@ mod tests {
                 _ => panic!("Unexpected hook name: {hook_name}"),
             },
             number_of_installed_hooks: AtomicU8::new(0),
+            temp_dir: tempfile::tempdir().unwrap(),
         };
         let result = install_hooks(&config, &installer);
         assert!(result.is_ok());

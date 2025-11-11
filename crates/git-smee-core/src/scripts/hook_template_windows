@@ -1,0 +1,5 @@
+@echo off
+REM DO NOT MODIFY THIS FILE DIRECTLY
+REM THIS FILE IS MANAGED BY git-smee
+
+git smee run {hook}

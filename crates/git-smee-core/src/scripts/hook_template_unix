@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# DO NOT MODIFY THIS FILE DIRECTLY
+# THIS FILE IS MANAGED BY git-smee
+
+set -e
+
+git smee run {hook}
