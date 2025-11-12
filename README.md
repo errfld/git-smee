@@ -1,5 +1,7 @@
 # git-smee
 
+[![CI](https://github.com/errfld/git-smee/actions/workflows/ci.yml/badge.svg)](https://github.com/errfld/git-smee/actions/workflows/ci.yml)
+
 git-smee is a lightweight Rust CLI that manages Git hooks from a version-controlled configuration file, `.smee.toml`, in your repository.
 
 Instead of copying hook scripts around or relying on heavy external tooling, git-smee installs small, idempotent hook wrappers that delegate to commands defined in your config—making hook behavior consistent across all contributors.
