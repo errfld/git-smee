@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Parser, command};
-use git_smee_core::{config, installer};
+use git_smee_core::{config, executor, installer};
 
 #[derive(clap::Parser)]
 #[command(name = "git-smee")]
@@ -32,8 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Run { hook } => {
             println!("Running hook: {hook}");
-            // Hook execution logic goes here
-            Ok(())
+            let phase = config::LifeCyclePhase::from_str(&hook)?;
+            executor::execute_hook(&config, phase).map_err(Box::from)
         }
     }
 }

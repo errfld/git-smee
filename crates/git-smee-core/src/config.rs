@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, str::FromStr};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -66,6 +66,35 @@ pub enum LifeCyclePhase {
     Unknown,
 }
 
+impl FromStr for LifeCyclePhase {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "applypatch-msg" => Ok(LifeCyclePhase::ApplypatchMsg),
+            "pre-applypatch" => Ok(LifeCyclePhase::PreApplypatch),
+            "post-applypatch" => Ok(LifeCyclePhase::PostApplypatch),
+            "pre-commit" => Ok(LifeCyclePhase::PreCommit),
+            "prepare-commit-msg" => Ok(LifeCyclePhase::PrepareCommitMsg),
+            "commit-msg" => Ok(LifeCyclePhase::CommitMsg),
+            "post-commit" => Ok(LifeCyclePhase::PostCommit),
+            "pre-merge-commit" => Ok(LifeCyclePhase::PreMergeCommit),
+            "pre-rebase" => Ok(LifeCyclePhase::PreRebase),
+            "post-checkout" => Ok(LifeCyclePhase::PostCheckout),
+            "post-merge" => Ok(LifeCyclePhase::PostMerge),
+            "post-rewrite" => Ok(LifeCyclePhase::PostRewrite),
+            "pre-push" => Ok(LifeCyclePhase::PrePush),
+            "reference-transaction" => Ok(LifeCyclePhase::ReferenceTransaction),
+            "push-to-checkout" => Ok(LifeCyclePhase::PushToCheckout),
+            "pre-auto-gc" => Ok(LifeCyclePhase::PreAutoGc),
+            "post-update" => Ok(LifeCyclePhase::PostUpdate),
+            "fsmonitor-watchman" => Ok(LifeCyclePhase::FsmonitorWatchman),
+            "post-index-change" => Ok(LifeCyclePhase::PostIndexChange),
+            _ => Err(Error::UnknownLifeCyclePhase(s.to_string())),
+        }
+    }
+}
+
 impl fmt::Display for LifeCyclePhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
@@ -108,6 +137,8 @@ pub enum Error {
     ParseError(#[from] toml::de::Error),
     #[error("Configuration validation error")]
     ValidationError,
+    #[error("Unknown lifecycle phase: {0}")]
+    UnknownLifeCyclePhase(String),
 }
 
 #[cfg(test)]
@@ -137,5 +168,35 @@ mod tests {
             .expect("Second Hook Definition should be present");
         assert_eq!(hook_definition.command, "cargo test");
         assert!(!hook_definition.parallel_execution_allowed);
+    }
+
+    #[test]
+    fn given_lifecycle_when_from_str_then_correct_enum_returned() {
+        let all_enums = [
+            LifeCyclePhase::ApplypatchMsg,
+            LifeCyclePhase::PreApplypatch,
+            LifeCyclePhase::PostApplypatch,
+            LifeCyclePhase::PreCommit,
+            LifeCyclePhase::PrepareCommitMsg,
+            LifeCyclePhase::CommitMsg,
+            LifeCyclePhase::PostCommit,
+            LifeCyclePhase::PreMergeCommit,
+            LifeCyclePhase::PreRebase,
+            LifeCyclePhase::PostCheckout,
+            LifeCyclePhase::PostMerge,
+            LifeCyclePhase::PostRewrite,
+            LifeCyclePhase::PrePush,
+            LifeCyclePhase::ReferenceTransaction,
+            LifeCyclePhase::PushToCheckout,
+            LifeCyclePhase::PreAutoGc,
+            LifeCyclePhase::PostUpdate,
+            LifeCyclePhase::FsmonitorWatchman,
+            LifeCyclePhase::PostIndexChange,
+        ];
+        all_enums.iter().for_each(|phase| {
+            let phase_str = phase.to_string();
+            let parsed_phase = LifeCyclePhase::from_str(&phase_str).unwrap();
+            assert_eq!(&parsed_phase, phase);
+        });
     }
 }
