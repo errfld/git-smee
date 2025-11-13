@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    name: Build ${{ matrix.target }} binary
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release -p git-smee-cli
+
+      - name: Prepare artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          mkdir -p dist
+          cp target/release/git-smee dist/
+          tar -czf git-smee-${VERSION}-${{ matrix.target }}.${{ matrix.archive_ext }} -C dist git-smee
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: git-smee-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
