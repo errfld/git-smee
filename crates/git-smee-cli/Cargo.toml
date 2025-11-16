@@ -10,3 +10,10 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 git-smee-core = { path = "../git-smee-core" }
+
+[dev-dependencies]
+assert_cmd = "2.1"
+assert_fs = "1.1"
+predicates = "3.1"
+tempfile = "3"
+git2 = "0.20"
