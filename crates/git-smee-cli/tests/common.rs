@@ -1,9 +1,8 @@
 use std::{fs, path::PathBuf};
 
 use assert_fs::{TempDir, assert::PathAssert, fixture::ChildPath, prelude::PathChild};
-use git_smee_core::config::{self, LifeCyclePhase};
+use git_smee_core::config::LifeCyclePhase;
 use predicates::path::{exists, is_file};
-use tempfile::TempPath;
 
 pub struct TestRepo {
     pub path: TempDir,
