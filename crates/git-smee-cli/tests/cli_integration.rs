@@ -17,6 +17,9 @@ fn given_git_smee_when_install_then_hooks_are_present() {
     let test_repo = common::TestRepo::default();
 
     let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
-    cmd.arg("install").assert().success();
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
     test_repo.assert_hooks_installed(vec![LifeCyclePhase::PreCommit, LifeCyclePhase::PrePush]);
 }
