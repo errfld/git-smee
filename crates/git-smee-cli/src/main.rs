@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Parser, command};
-use git_smee_core::{config, executor, installer};
+use git_smee_core::{config, executor, installer, repository};
 
 #[derive(clap::Parser)]
 #[command(name = "git-smee")]
@@ -18,6 +18,9 @@ enum Command {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure we're in a git repository and navigate to the root
+    repository::ensure_in_repo_root()?;
+
     let cli = Cli::parse();
     let Ok(config_file) = PathBuf::from_str(".git-smee.toml");
     let config = config::SmeeConfig::try_from(config_file.as_path())?;
