@@ -1,7 +1,7 @@
 use std::fs;
 
 use git_smee_core::{
-    SmeeConfig,
+    DEFAULT_CONFIG_FILE_NAME, SmeeConfig,
     installer::{self, FileSystemHookInstaller},
 };
 
@@ -12,24 +12,31 @@ fn given_simple_config_when_installing_hooks_then_no_error() {
         .expect("Should read fixture file");
 
     let temp_dir = tempfile::tempdir().unwrap();
-    let config_path = temp_dir.path().join("smee.toml");
-    std::fs::write(&config_path, config_content).unwrap();
+    let hooks_dir = temp_dir.path().join(".git").join("hooks");
+    fs::create_dir_all(&hooks_dir).expect("Could not create temporary hoods directory .git/hooks");
 
-    let config: SmeeConfig = config_path.as_path().try_into().unwrap();
-    let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf()).unwrap();
+    let config_path = temp_dir.path().join(DEFAULT_CONFIG_FILE_NAME);
+    assert!(std::fs::write(&config_path, config_content).is_ok());
+
+    let config: SmeeConfig = config_path
+        .as_path()
+        .try_into()
+        .expect("Not able to read smee config from config_path");
+    let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf())
+        .expect("No able to create Filesystem installer in temp dir");
     // when
     let result = installer::install_hooks(&config, &installer);
 
     // then
     assert!(result.is_ok());
-    let hook = temp_dir.path().join("pre-commit");
+    let hook = hooks_dir.join("pre-commit");
     assert!(hook.exists());
     assert!(
         fs::read_to_string(&hook)
             .unwrap()
             .contains("git smee run pre-commit")
     );
-    let hook = temp_dir.path().join("pre-push");
+    let hook = hooks_dir.join("pre-push");
     assert!(hook.exists());
     assert!(
         fs::read_to_string(&hook)

@@ -1,10 +1,15 @@
 use core::fmt;
-use std::{collections::HashMap, fs, path::Path, str::FromStr};
+use std::{
+    collections::{HashMap, hash_map},
+    fs,
+    path::Path,
+    str::FromStr,
+};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct SmeeConfig {
     #[serde(flatten)]
     pub hooks: HashMap<LifeCyclePhase, Vec<HookDefinition>>,
@@ -24,6 +29,20 @@ impl SmeeConfig {
     }
 }
 
+impl Default for SmeeConfig {
+    fn default() -> Self {
+        let mut hash_map: HashMap<LifeCyclePhase, Vec<HookDefinition>> = hash_map::HashMap::new();
+        hash_map.insert(
+            LifeCyclePhase::PreCommit,
+            vec![HookDefinition {
+                command: "echo 'Default pre-commit hook'".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        Self { hooks: hash_map }
+    }
+}
+
 impl TryFrom<&Path> for SmeeConfig {
     type Error = Error;
 
@@ -32,14 +51,22 @@ impl TryFrom<&Path> for SmeeConfig {
     }
 }
 
-#[derive(Deserialize)]
+impl TryFrom<&SmeeConfig> for String {
+    type Error = Error;
+
+    fn try_from(value: &SmeeConfig) -> Result<Self, Self::Error> {
+        toml::to_string_pretty(value).map_err(Error::SerializeError)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct HookDefinition {
     pub command: String,
     #[serde(default = "bool::default")]
     pub parallel_execution_allowed: bool,
 }
 
-#[derive(Deserialize, PartialEq, Eq, Hash, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub enum LifeCyclePhase {
     ApplypatchMsg,
@@ -135,6 +162,8 @@ pub enum Error {
     ReadError(#[from] std::io::Error),
     #[error("Failed to parse the configuration file: {0}")]
     ParseError(#[from] toml::de::Error),
+    #[error("Failed to serialize the configuration: {0}")]
+    SerializeError(#[from] toml::ser::Error),
     #[error("Configuration validation error")]
     ValidationError,
     #[error("Unknown lifecycle phase: {0}")]
@@ -168,6 +197,16 @@ mod tests {
             .expect("Second Hook Definition should be present");
         assert_eq!(hook_definition.command, "cargo test");
         assert!(!hook_definition.parallel_execution_allowed);
+    }
+
+    #[test]
+    fn given_default_config_when_try_into_string_then_string() {
+        let config = SmeeConfig::default();
+        assert_eq!(config.hooks.len(), 1);
+
+        //when
+        let serialized_config: String = (&config).try_into().unwrap();
+        assert!(serialized_config.contains("pre-commit"))
     }
 
     #[test]

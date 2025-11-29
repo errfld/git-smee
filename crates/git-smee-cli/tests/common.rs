@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use assert_fs::{TempDir, assert::PathAssert, fixture::ChildPath, prelude::PathChild};
-use git_smee_core::config::LifeCyclePhase;
+use git_smee_core::{DEFAULT_CONFIG_FILE_NAME, config::LifeCyclePhase};
 use predicates::path::{exists, is_file};
 
 pub struct TestRepo {
@@ -27,10 +27,8 @@ impl TestRepo {
     command = "echo Pre-push hook executed"
     "#;
 
-    const CONFIG_FILE_NAME: &str = ".git-smee.toml";
-
     pub fn config_path(&self) -> PathBuf {
-        self.path.join(Self::CONFIG_FILE_NAME)
+        self.path.join(DEFAULT_CONFIG_FILE_NAME)
     }
 
     pub fn create_config(&self) {

@@ -1,4 +1,4 @@
-use crate::{SmeeConfig, platform::Platform};
+use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, platform::Platform};
 use std::{fs, path::PathBuf};
 use thiserror::Error;
 
@@ -17,40 +17,64 @@ pub enum Error {
     PlatformError(#[from] crate::platform::Error),
 }
 
+/// Behavioral definition of a hook installer.
+///
+/// The trait defines a rough shape for anything that might install a hook. However the most common implementation
+/// will be a [`FileSystemHookInstaller`]
 pub trait HookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error>;
+    fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error>;
 }
 
 pub struct FileSystemHookInstaller {
-    hooks_path: PathBuf,
+    repository_root: PathBuf,
 }
 
 impl FileSystemHookInstaller {
-    const HOOKS_DIR: &str = ".git/hooks";
+    /// The relative path to the hooks directory (`.git/hooks`).
+    pub const HOOKS_DIR: &str = ".git/hooks";
 
     pub fn new() -> Result<Self, Error> {
         Self::from_default()
     }
 
     pub fn from_default() -> Result<Self, Error> {
-        Self::from_path(PathBuf::from(Self::HOOKS_DIR))
+        Self::from_path(PathBuf::from("./"))
     }
 
-    pub fn from_path(hooks_path: PathBuf) -> Result<Self, Error> {
+    /// Creates a `FileSystemHookInstaller`.
+    ///
+    /// The HOOKS_DIR should be within the provided path.
+    /// ```
+    /// use git_smee_core::installer::FileSystemHookInstaller;
+    ///
+    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// ```
+    /// # Arguments
+    /// * `repository_root` - the path of the root of your repository. Typically the directory containing the `.git` folder
+    ///
+    pub fn from_path(repository_root: PathBuf) -> Result<Self, Error> {
+        let hooks_path = repository_root.join(Self::HOOKS_DIR);
         if !hooks_path.exists() || !hooks_path.is_dir() {
             return Err(Error::HooksDirNotFound(
                 hooks_path.to_string_lossy().to_string(),
             ));
         }
-        Ok(Self { hooks_path })
+        Ok(Self { repository_root })
     }
 }
 
 impl HookInstaller for FileSystemHookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
-        let hook_file = self.hooks_path.join(hook_name);
+        let hook_file = self.repository_root.join(Self::HOOKS_DIR).join(hook_name);
         fs::write(&hook_file, hook_content).map_err(Error::FailedToWriteHook)?;
         Ok(hook_file)
+    }
+
+    fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error> {
+        let config_path = self.repository_root.join(DEFAULT_CONFIG_FILE_NAME);
+        fs::write(&config_path, config_content).map_err(Error::FailedToWriteHook)?;
+        Ok(config_path)
     }
 }
 
@@ -77,7 +101,6 @@ pub fn install_hooks<T: HookInstaller>(
             Ok(())
         })
         .collect::<Result<Vec<_>, Error>>()?;
-
     Ok(())
 }
 
@@ -90,7 +113,19 @@ mod tests {
     struct AssertingHookInstaller {
         assertion: fn(hook_name: &str, hook_content: &str) -> (),
         number_of_installed_hooks: AtomicU8,
+        number_of_installed_config_files: AtomicU8,
         temp_dir: tempfile::TempDir,
+    }
+
+    impl AssertingHookInstaller {
+        fn new(assertion: fn(hook_name: &str, hook_content: &str) -> ()) -> Self {
+            Self {
+                assertion,
+                number_of_installed_hooks: AtomicU8::new(0),
+                number_of_installed_config_files: AtomicU8::new(0),
+                temp_dir: tempfile::tempdir().unwrap(),
+            }
+        }
     }
 
     impl HookInstaller for AssertingHookInstaller {
@@ -102,6 +137,14 @@ mod tests {
             fs::write(&hook, hook_content).unwrap();
             Ok(hook)
         }
+
+        fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error> {
+            self.number_of_installed_config_files
+                .fetch_add(1, Ordering::SeqCst);
+            let config_file = self.temp_dir.path().join(DEFAULT_CONFIG_FILE_NAME);
+            fs::write(&config_file, config_content).unwrap();
+            Ok(config_file)
+        }
     }
 
     #[test]
@@ -110,11 +153,7 @@ mod tests {
             hooks: std::collections::HashMap::new(),
         };
 
-        let installer = AssertingHookInstaller {
-            assertion: |_, _| panic!("No hooks should be installed"),
-            number_of_installed_hooks: AtomicU8::new(0),
-            temp_dir: tempfile::tempdir().unwrap(),
-        };
+        let installer = AssertingHookInstaller::new(|_, _| panic!("No hooks should be installed"));
 
         let result = install_hooks(&config, &installer);
         assert!(matches!(result, Err(Error::NoHooksPresent)));
@@ -136,14 +175,10 @@ mod tests {
         );
         let config = SmeeConfig { hooks: hooks_map };
 
-        let installer = AssertingHookInstaller {
-            assertion: |hook_name, hook_content| {
-                assert_eq!(hook_name, "pre-commit");
-                assert!(hook_content.contains("git smee run pre-commit"));
-            },
-            number_of_installed_hooks: AtomicU8::new(0),
-            temp_dir: tempfile::tempdir().unwrap(),
-        };
+        let installer = AssertingHookInstaller::new(|hook_name, hook_content| {
+            assert_eq!(hook_name, "pre-commit");
+            assert!(hook_content.contains("git smee run pre-commit"));
+        });
 
         let result = install_hooks(&config, &installer);
         if let Err(err) = &result {
@@ -174,24 +209,34 @@ mod tests {
             }],
         );
         let config = SmeeConfig { hooks: hooks_map };
-        let installer = AssertingHookInstaller {
-            assertion: |hook_name, hook_content| match hook_name {
-                "pre-commit" => {
-                    assert!(hook_content.contains("git smee run pre-commit"));
-                }
-                "pre-push" => {
-                    assert!(hook_content.contains("git smee run pre-push"));
-                }
-                _ => panic!("Unexpected hook name: {hook_name}"),
-            },
-            number_of_installed_hooks: AtomicU8::new(0),
-            temp_dir: tempfile::tempdir().unwrap(),
-        };
+        let installer = AssertingHookInstaller::new(|hook_name, hook_content| match hook_name {
+            "pre-commit" => {
+                assert!(hook_content.contains("git smee run pre-commit"));
+            }
+            "pre-push" => {
+                assert!(hook_content.contains("git smee run pre-push"));
+            }
+            _ => panic!("Unexpected hook name: {hook_name}"),
+        });
         let result = install_hooks(&config, &installer);
         assert!(result.is_ok());
         assert_eq!(
             installer.number_of_installed_hooks.load(Ordering::SeqCst),
             2
+        );
+    }
+
+    #[test]
+    fn when_initializing_config_file_then_config_written() {
+        let installer = AssertingHookInstaller::new(|_, _| {});
+        let serialized_config: String = (&SmeeConfig::default()).try_into().unwrap();
+        let install_result = installer.install_config_file(&serialized_config);
+        assert!(install_result.is_ok());
+        assert_eq!(
+            installer
+                .number_of_installed_config_files
+                .load(Ordering::SeqCst),
+            1
         );
     }
 }
