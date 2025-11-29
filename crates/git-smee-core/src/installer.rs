@@ -17,6 +17,10 @@ pub enum Error {
     PlatformError(#[from] crate::platform::Error),
 }
 
+/// Behavioral definition of a hook installer.
+///
+/// The trait defines a rough shape for anything that might install a hook. However the most common implementation
+/// will be a [`FileSystemHookInstaller`]
 pub trait HookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error>;
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error>;
@@ -27,7 +31,8 @@ pub struct FileSystemHookInstaller {
 }
 
 impl FileSystemHookInstaller {
-    const HOOKS_DIR: &str = ".git/hooks";
+    /// The relative path to the hooks directory (`.git/hooks`).
+    pub const HOOKS_DIR: &str = ".git/hooks";
 
     pub fn new() -> Result<Self, Error> {
         Self::from_default()
@@ -37,6 +42,17 @@ impl FileSystemHookInstaller {
         Self::from_path(PathBuf::from("./"))
     }
 
+    /// Creates a `FileSystemHookInstaller`.
+    ///
+    /// The HOOKS_DIR should be within the provided path.
+    /// ```
+    /// use git_smee_core::installer::FileSystemHookInstaller;
+    ///
+    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// ```
+    /// # Arguments
+    /// * `repository_root` - the path of the root of your repository. Typically the directory containing the `.git` folder
+    ///
     pub fn from_path(repository_root: PathBuf) -> Result<Self, Error> {
         let hooks_path = repository_root.join(Self::HOOKS_DIR);
         if !hooks_path.exists() || !hooks_path.is_dir() {

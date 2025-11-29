@@ -36,11 +36,14 @@ pub fn ensure_in_repo_root() -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{fs, sync::Mutex};
     use tempfile::TempDir;
+
+    static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn given_current_dir_is_git_root_when_finding_root_then_returns_current_dir() {
+        let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let git_dir = temp_dir.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
@@ -60,6 +63,7 @@ mod tests {
 
     #[test]
     fn given_current_dir_is_subdirectory_of_repo_when_finding_root_then_returns_repo_root() {
+        let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let git_dir = temp_dir.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
@@ -81,6 +85,7 @@ mod tests {
 
     #[test]
     fn given_current_dir_is_deeply_nested_subdirectory_when_finding_root_then_returns_repo_root() {
+        let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let git_dir = temp_dir.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
@@ -119,6 +124,7 @@ mod tests {
 
     #[test]
     fn given_in_git_repo_when_ensuring_in_repo_root_then_succeeds() {
+        let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let git_dir = temp_dir.path().join(".git");
         fs::create_dir(&git_dir).unwrap();
@@ -142,6 +148,7 @@ mod tests {
 
     #[test]
     fn given_not_in_git_repo_when_ensuring_in_repo_root_then_returns_error() {
+        let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         // Deliberately don't create .git directory
 
