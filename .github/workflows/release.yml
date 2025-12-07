@@ -59,9 +59,9 @@ jobs:
       - name: Update Homebrew Tap
         uses: mislav/bump-homebrew-formula-action@v3
         with:
-          homebrew_tap: errfld/homebrew-git-smee
-          formula_name: git-smee
-          tag_name: ${{ github.ref_name }}
-          download_url: https://github.com/errfld/git-smee/releases/download/${{ github.ref_name }}/git-smee-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
+          homebrew-tap: errfld/homebrew-git-smee
+          formula-name: git-smee
+          tag-name: ${{ github.ref_name }}
+          download-url: https://github.com/errfld/git-smee/releases/download/${{ github.ref_name }}/git-smee-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
         env:
-          COMMITTER_TOKEN: ${{ secrets.GH_PAT }}
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_PAT }}
