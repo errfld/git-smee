@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "git-smee-cli"
-version = "0.1.1"
+version = "0.0.1"
 dependencies = [
  "assert_cmd",
  "assert_fs",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "git-smee-core"
-version = "0.1.1"
+version = "0.0.1"
 dependencies = [
  "serde",
  "tempfile",
