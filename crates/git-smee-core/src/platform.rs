@@ -1,4 +1,4 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 use thiserror::Error;
 
@@ -40,6 +40,21 @@ impl Platform {
                 let permissions = metadata.permissions().mode() | 0o111;
                 fs::set_permissions(hook_path, fs::Permissions::from_mode(permissions))
                     .map_err(Error::FailedToSetPermissions)
+            }
+        }
+    }
+
+    pub fn create_command(&self) -> Command {
+        match self {
+            Platform::Windows => {
+                let mut cmd = Command::new("cmd.exe");
+                cmd.arg("/C");
+                cmd
+            }
+            Platform::Unix => {
+                let mut cmd = Command::new("bash");
+                cmd.arg("-c");
+                cmd
             }
         }
     }
