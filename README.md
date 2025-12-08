@@ -82,7 +82,40 @@ command = "your command here"
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `command` | string | yes | The command to execute |
-| `parallel_execution_allowed` | bool | no | *(Planned)* Allow parallel execution of commands (default: `false`) |
+| `parallel_execution_allowed` | bool | no | Allow parallel execution with other parallel-enabled commands (default: `false`) |
+
+### Execution Order
+
+When running hooks, git-smee executes commands in two phases:
+
+1. **Sequential phase**: All commands with `parallel_execution_allowed = false` (or omitted) run one at a time, in the order they appear in the config.
+2. **Parallel phase**: All commands with `parallel_execution_allowed = true` run concurrently using a thread pool.
+
+Sequential commands always complete before parallel commands begin. If any command fails, execution stops immediately (fail-fast behavior).
+
+**Example:**
+
+```toml
+[[pre-commit]]
+command = "cargo fmt --check"
+# Sequential (default) - runs first
+
+[[pre-commit]]
+command = "cargo clippy"
+parallel_execution_allowed = true
+# Parallel - runs concurrently with other parallel commands
+
+[[pre-commit]]
+command = "cargo test --lib"
+parallel_execution_allowed = true
+# Parallel - runs concurrently with clippy
+
+[[pre-commit]]
+command = "echo 'Setup complete'"
+# Sequential - runs before parallel commands
+```
+
+In this example, the two sequential commands (`cargo fmt --check` and `echo 'Setup complete'`) run first in order, then `cargo clippy` and `cargo test --lib` run in parallel.
 
 ### Supported Git Hooks
 

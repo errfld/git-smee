@@ -9,3 +9,6 @@ edition = "2024"
 authors = ["Eran Riesenfeld"]
 license = "MIT"
 repository = "https://github.com/errfld/git-smee"
+
+[workspace.dependencies]
+assert2 = "0.3"
