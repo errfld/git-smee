@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr};
 
-use clap::{Parser, command};
+use clap::Parser;
 use git_smee_core::{
     DEFAULT_CONFIG_FILE_NAME, SmeeConfig, config, executor,
     installer::{self, HookInstaller},
