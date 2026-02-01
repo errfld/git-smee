@@ -16,6 +16,38 @@ pub struct SmeeConfig {
 }
 
 impl SmeeConfig {
+    /// Load configuration from a TOML file.
+    ///
+    /// Reads and parses the `.smee.toml` configuration file at the given path.
+    /// The file must exists and have a `.toml` extension
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Paht to the TOML configuration file
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use git_smee_core::SmeeConfig;
+    /// use git_smee_core::config::LifeCyclePhase;
+    /// use std::fs;
+    /// use tempfile::tempdir;
+    ///
+    /// let dir = tempdir().unwrap();
+    /// let config_path = dir.path().join(".git-smee.toml");
+    /// let toml_content = r#"
+    /// [[pre-commit]]
+    /// command = "cargo build"
+    ///
+    /// [[pre-commit]]
+    /// command = "cargo test"
+    /// "#;
+    /// fs::write(&config_path, toml_content).unwrap();
+    ///
+    /// let config = SmeeConfig::from_toml(&config_path).unwrap();
+    /// assert!(config.hooks.contains_key(&LifeCyclePhase::PreCommit));
+    /// ```
+    ///
     pub fn from_toml(path: &Path) -> Result<Self, Error> {
         if !path.exists() || !path.is_file() {
             return Err(Error::MissingFile);

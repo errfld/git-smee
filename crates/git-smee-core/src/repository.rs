@@ -11,6 +11,28 @@ pub enum Error {
 
 /// Finds the git repository root by walking up from the current directory
 /// looking for a `.git` directory.
+///
+/// # Examples
+///
+/// ```rust
+/// use git_smee_core::find_git_root;
+/// use std::{env, fs};
+/// use tempfile::tempdir;
+///
+/// let temp_dir = tempdir().unwrap();
+/// let git_dir = temp_dir.path().join(".git");
+/// fs::create_dir(&git_dir).unwrap();
+/// let nested = temp_dir.path().join("nested");
+/// fs::create_dir(&nested).unwrap();
+///
+/// let original_dir = env::current_dir().unwrap();
+/// env::set_current_dir(&nested).unwrap();
+///
+/// let repo_root = find_git_root().unwrap();
+///
+/// env::set_current_dir(&original_dir).unwrap();
+/// assert!(repo_root.join(".git").exists());
+/// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
     let mut current = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
 
@@ -28,6 +50,29 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
 }
 
 /// Validates that we're in a git repository and changes to the repository root.
+///
+/// # Examples
+///
+/// ```rust
+/// use git_smee_core::ensure_in_repo_root;
+/// use std::{env, fs};
+/// use tempfile::tempdir;
+///
+/// let temp_dir = tempdir().unwrap();
+/// let git_dir = temp_dir.path().join(".git");
+/// fs::create_dir(&git_dir).unwrap();
+/// let nested = temp_dir.path().join("nested");
+/// fs::create_dir(&nested).unwrap();
+///
+/// let original_dir = env::current_dir().unwrap();
+/// env::set_current_dir(&nested).unwrap();
+///
+/// ensure_in_repo_root().unwrap();
+/// let current_dir = env::current_dir().unwrap();
+///
+/// env::set_current_dir(&original_dir).unwrap();
+/// assert!(current_dir.join(".git").exists());
+/// ```
 pub fn ensure_in_repo_root() -> Result<(), Error> {
     let git_root = find_git_root()?;
     env::set_current_dir(&git_root).map_err(Error::FailedToChangeDirectory)

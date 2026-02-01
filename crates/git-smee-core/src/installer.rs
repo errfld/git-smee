@@ -34,25 +34,77 @@ impl FileSystemHookInstaller {
     /// The relative path to the hooks directory (`.git/hooks`).
     pub const HOOKS_DIR: &str = ".git/hooks";
 
+    /// Creates a hook installer rooted at the current working directory.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use git_smee_core::installer::FileSystemHookInstaller;
+    /// use std::{env, fs};
+    /// use tempfile::tempdir;
+    ///
+    /// let temp_dir = tempdir().unwrap();
+    /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
+    /// fs::create_dir_all(&hooks_dir).unwrap();
+    ///
+    /// let original_dir = env::current_dir().unwrap();
+    /// env::set_current_dir(temp_dir.path()).unwrap();
+    ///
+    /// let installer = FileSystemHookInstaller::new().unwrap();
+    ///
+    /// env::set_current_dir(&original_dir).unwrap();
+    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// drop(installer);
+    /// ```
     pub fn new() -> Result<Self, Error> {
         Self::from_default()
     }
 
+    /// Creates a hook installer using `./` as the repository root.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use git_smee_core::installer::FileSystemHookInstaller;
+    /// use std::{env, fs};
+    /// use tempfile::tempdir;
+    ///
+    /// let temp_dir = tempdir().unwrap();
+    /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
+    /// fs::create_dir_all(&hooks_dir).unwrap();
+    ///
+    /// let original_dir = env::current_dir().unwrap();
+    /// env::set_current_dir(temp_dir.path()).unwrap();
+    ///
+    /// let installer = FileSystemHookInstaller::from_default().unwrap();
+    ///
+    /// env::set_current_dir(&original_dir).unwrap();
+    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// drop(installer);
+    /// ```
     pub fn from_default() -> Result<Self, Error> {
         Self::from_path(PathBuf::from("./"))
     }
 
-    /// Creates a `FileSystemHookInstaller`.
+    /// Creates a `FileSystemHookInstaller` rooted at the provided repository path.
     ///
-    /// The HOOKS_DIR should be within the provided path.
-    /// ```
+    /// The hooks directory must exist within the provided root.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
     /// use git_smee_core::installer::FileSystemHookInstaller;
+    /// use std::fs;
+    /// use tempfile::tempdir;
     ///
+    /// let temp_dir = tempdir().unwrap();
+    /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
+    /// fs::create_dir_all(&hooks_dir).unwrap();
+    ///
+    /// let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf()).unwrap();
     /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// drop(installer);
     /// ```
-    /// # Arguments
-    /// * `repository_root` - the path of the root of your repository. Typically the directory containing the `.git` folder
-    ///
     pub fn from_path(repository_root: PathBuf) -> Result<Self, Error> {
         let hooks_path = repository_root.join(Self::HOOKS_DIR);
         if !hooks_path.exists() || !hooks_path.is_dir() {
@@ -78,6 +130,36 @@ impl HookInstaller for FileSystemHookInstaller {
     }
 }
 
+/// Installs hook scripts for each configured lifecycle phase.
+///
+/// # Examples
+///
+/// ```rust
+/// use git_smee_core::{install_hooks, SmeeConfig};
+/// use git_smee_core::config::{HookDefinition, LifeCyclePhase};
+/// use git_smee_core::installer::FileSystemHookInstaller;
+/// use std::fs;
+/// use tempfile::tempdir;
+///
+/// let temp_dir = tempdir().unwrap();
+/// let hooks_dir = temp_dir.path().join(".git").join("hooks");
+/// fs::create_dir_all(&hooks_dir).unwrap();
+///
+/// let mut hooks = std::collections::HashMap::new();
+/// hooks.insert(
+///     LifeCyclePhase::PreCommit,
+///     vec![HookDefinition {
+///         command: "echo pre-commit".to_string(),
+///         parallel_execution_allowed: false,
+///     }],
+/// );
+/// let config = SmeeConfig { hooks };
+///
+/// let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf()).unwrap();
+/// install_hooks(&config, &installer).unwrap();
+///
+/// assert!(hooks_dir.join("pre-commit").exists());
+/// ```
 pub fn install_hooks<T: HookInstaller>(
     config: &SmeeConfig,
     hook_installer: &T,
