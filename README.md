@@ -70,7 +70,25 @@ cargo install --path crates/git-smee-cli
    By default, `install` only overwrites hook files previously managed by git-smee.
    Existing unmanaged hook files are preserved unless you pass `--force`.
 
-That's it! Your hooks are now active. When Git triggers a hook, it calls `git smee run <hook>`, which executes the configured commands in order.
+That's it! Your hooks are now active. When Git triggers a hook, the installed wrapper runs the `git-smee` executable directly and executes the configured commands in order.
+
+### Alternate config paths
+
+By default, git-smee reads `.git-smee.toml` from the repository root.
+
+You can override the config path in two ways:
+
+- CLI flag: `--config <path>`
+- Environment variable: `GIT_SMEE_CONFIG=<path>`
+
+Precedence is explicit: `--config` > `GIT_SMEE_CONFIG` > `.git-smee.toml`.
+
+Examples:
+
+```bash
+git smee install --config .config/git-smee.toml
+GIT_SMEE_CONFIG=.config/git-smee.toml git smee run pre-commit
+```
 
 ## Configuration
 
@@ -150,9 +168,9 @@ git-smee supports all standard Git lifecycle hooks:
 ## CLI Commands
 
 ```bash
-git smee init [--force]      # Initialize a .git-smee.toml configuration file
-git smee install [--force]   # Install hooks into Git's effective hooks directory
-git smee run <hook> # Run a specific git hook (called by installed hook scripts)
+git smee init [--force] [--config <path>]       # Initialize a config file
+git smee install [--force] [--config <path>]    # Install hooks from the selected config
+git smee run <hook> [--config <path>]           # Run a specific git hook
 ```
 
 ## How it works (high level)
@@ -175,9 +193,9 @@ git smee run <hook> # Run a specific git hook (called by installed hook scripts)
    - which Git hook name (e.g. `pre-commit`) maps to which commands,
    - that each `[[hook-name]]` entry is an ordered `HookDefinition`.
 
-3. The installer will write idempotent scripts into `.git/hooks`:
+3. The installer will write idempotent scripts into Git's effective hooks directory:
 
-   - Each script calls `git smee run <hook>`.
+   - Each script runs the installed `git-smee` executable directly with `--config <resolved path> run <hook>`.
 
 4. The executor will run the configured commands for that hook and propagate exit codes back to Git.
 
