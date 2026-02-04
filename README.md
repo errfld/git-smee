@@ -46,6 +46,7 @@ cargo install --path crates/git-smee-cli
    ```
 
    This creates a `.git-smee.toml` file with a default pre-commit hook.
+   If the file already exists, `init` refuses to overwrite it unless you pass `--force`.
 
 2. Edit `.git-smee.toml` to define your hooks:
 
@@ -65,6 +66,9 @@ cargo install --path crates/git-smee-cli
    ```bash
    git smee install
    ```
+
+   By default, `install` only overwrites hook files previously managed by git-smee.
+   Existing unmanaged hook files are preserved unless you pass `--force`.
 
 That's it! Your hooks are now active. When Git triggers a hook, it calls `git smee run <hook>`, which executes the configured commands in order.
 
@@ -146,8 +150,8 @@ git-smee supports all standard Git lifecycle hooks:
 ## CLI Commands
 
 ```bash
-git smee init      # Initialize a .git-smee.toml configuration file
-git smee install   # Install git hooks from .git-smee.toml into .git/hooks
+git smee init [--force]      # Initialize a .git-smee.toml configuration file
+git smee install [--force]   # Install hooks into Git's effective hooks directory
 git smee run <hook> # Run a specific git hook (called by installed hook scripts)
 ```
 
