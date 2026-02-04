@@ -10,6 +10,7 @@ use git_smee_core::{
 #[derive(clap::Parser)]
 #[command(name = "git-smee")]
 #[command(about = "🏴‍☠️ Smee - the right hand of (Git) hooks", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -32,15 +33,12 @@ enum Command {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Ensure we're in a git repository and navigate to the root
-    repository::ensure_in_repo_root()?;
-
     let cli = Cli::parse();
-
-    let installer = installer::FileSystemHookInstaller::from_default()?;
 
     match cli.command {
         Command::Install => {
+            repository::ensure_in_repo_root()?;
+            let installer = installer::FileSystemHookInstaller::from_default()?;
             println!("Installing hooks...");
             let config = read_config_file()?;
             installer::install_hooks(&config, &installer)?;
@@ -48,12 +46,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Command::Run { hook } => {
+            repository::ensure_in_repo_root()?;
             println!("Running hook: {hook}");
             let config = read_config_file()?;
             let phase = config::LifeCyclePhase::from_str(&hook)?;
             executor::execute_hook(&config, phase).map_err(Box::from)
         }
         Command::Initialize => {
+            repository::ensure_in_repo_root()?;
+            let installer = installer::FileSystemHookInstaller::from_default()?;
             println!("Initializing {DEFAULT_CONFIG_FILE_NAME} configuration file...");
             let default_config: String = (&config::SmeeConfig::default()).try_into()?;
             installer.install_config_file(&default_config)?;
