@@ -4,4 +4,13 @@
 
 set -e
 
-git smee run {hook}
+GIT_SMEE_BIN={git_smee_executable}
+GIT_SMEE_CONFIG={config_path}
+
+if [ -x "$GIT_SMEE_BIN" ]; then
+  "$GIT_SMEE_BIN" --config "$GIT_SMEE_CONFIG" run {hook}
+elif command -v git-smee >/dev/null 2>&1; then
+  git-smee --config "$GIT_SMEE_CONFIG" run {hook}
+else
+  git smee --config "$GIT_SMEE_CONFIG" run {hook}
+fi

@@ -181,7 +181,7 @@ fn given_managed_existing_hook_when_installing_without_force_then_it_is_overwrit
     installer::install_hooks(&config, &installer).unwrap();
 
     let installed = fs::read_to_string(pre_commit).unwrap();
-    assert!(installed.contains("git smee run pre-commit"));
+    assert!(installed.contains("run pre-commit"));
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn given_managed_marker_after_shebang_and_blank_line_when_installing_then_it_is_
     installer::install_hooks(&config, &installer).unwrap();
 
     let installed = fs::read_to_string(pre_commit).unwrap();
-    assert!(installed.contains("git smee run pre-commit"));
+    assert!(installed.contains("run pre-commit"));
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn given_windows_style_managed_hook_when_installing_without_force_then_it_is_ove
     installer::install_hooks(&config, &installer).unwrap();
 
     let installed = fs::read_to_string(pre_commit).unwrap();
-    assert!(installed.contains("git smee run pre-commit"));
+    assert!(installed.contains("run pre-commit"));
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn given_unmanaged_existing_hook_when_installing_with_force_then_it_is_overwritt
     installer::install_hooks(&config, &installer).unwrap();
 
     let installed = fs::read_to_string(pre_commit).unwrap();
-    assert!(installed.contains("git smee run pre-commit"));
+    assert!(installed.contains("run pre-commit"));
 }
 
 #[test]

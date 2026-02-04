@@ -32,7 +32,20 @@ impl TestRepo {
     }
 
     pub fn create_config(&self) {
-        fs::write(self.config_path(), Self::CONFIG_CONTENTS).expect("Unable to write test config");
+        self.write_config(Self::CONFIG_CONTENTS);
+    }
+
+    pub fn write_config(&self, contents: &str) {
+        fs::write(self.config_path(), contents).expect("Unable to write test config");
+    }
+
+    pub fn write_config_at(&self, relative_path: &str, contents: &str) -> PathBuf {
+        let path = self.path.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("Unable to create custom config directory");
+        }
+        fs::write(&path, contents).expect("Unable to write custom test config");
+        path
     }
 
     pub fn hooks_path(&self) -> ChildPath {

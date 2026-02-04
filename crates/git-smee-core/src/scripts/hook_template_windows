@@ -2,4 +2,16 @@
 REM DO NOT MODIFY THIS FILE DIRECTLY
 REM THIS FILE IS MANAGED BY git-smee
 
-git smee run {hook}
+set "GIT_SMEE_BIN={git_smee_executable}"
+set "GIT_SMEE_CONFIG={config_path}"
+
+if exist "%GIT_SMEE_BIN%" (
+  "%GIT_SMEE_BIN%" --config "%GIT_SMEE_CONFIG%" run {hook}
+) else (
+  where git-smee >nul 2>nul
+  if errorlevel 1 (
+    git smee --config "%GIT_SMEE_CONFIG%" run {hook}
+  ) else (
+    git-smee --config "%GIT_SMEE_CONFIG%" run {hook}
+  )
+)
