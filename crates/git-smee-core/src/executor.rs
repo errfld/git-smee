@@ -151,33 +151,54 @@ mod tests {
         SpawnError(io::ErrorKind),
     }
 
+    #[derive(Default)]
+    struct FakeRunnerState {
+        outcomes_by_command: HashMap<String, VecDeque<PlannedResult>>,
+        default_outcomes: VecDeque<PlannedResult>,
+        calls: Vec<String>,
+    }
+
     struct FakeRunner {
-        outcomes: Mutex<VecDeque<PlannedResult>>,
-        calls: Mutex<Vec<String>>,
+        state: Mutex<FakeRunnerState>,
     }
 
     impl FakeRunner {
-        fn new(outcomes: Vec<PlannedResult>) -> Self {
+        fn with_default_outcomes(outcomes: Vec<PlannedResult>) -> Self {
             Self {
-                outcomes: Mutex::new(outcomes.into()),
-                calls: Mutex::new(Vec::new()),
+                state: Mutex::new(FakeRunnerState {
+                    default_outcomes: outcomes.into(),
+                    ..Default::default()
+                }),
+            }
+        }
+
+        fn with_command_outcomes(outcomes_by_command: Vec<(&str, Vec<PlannedResult>)>) -> Self {
+            Self {
+                state: Mutex::new(FakeRunnerState {
+                    outcomes_by_command: outcomes_by_command
+                        .into_iter()
+                        .map(|(command, outcomes)| (command.to_string(), outcomes.into()))
+                        .collect(),
+                    ..Default::default()
+                }),
             }
         }
 
         fn calls(&self) -> Vec<String> {
-            self.calls.lock().unwrap().clone()
+            self.state.lock().unwrap().calls.clone()
         }
     }
 
     impl CommandRunner for FakeRunner {
         fn run(&self, command: &str) -> Result<Option<i32>, io::Error> {
-            self.calls.lock().unwrap().push(command.to_string());
-            let outcome = self
-                .outcomes
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("no fake outcome configured");
+            let mut state = self.state.lock().unwrap();
+            state.calls.push(command.to_string());
+            let outcome = state
+                .outcomes_by_command
+                .get_mut(command)
+                .and_then(VecDeque::pop_front)
+                .or_else(|| state.default_outcomes.pop_front())
+                .unwrap_or_else(|| panic!("no fake outcome configured for command '{command}'"));
             match outcome {
                 PlannedResult::Exit(code) => Ok(code),
                 PlannedResult::SpawnError(kind) => Err(io::Error::new(kind, "spawn failed")),
@@ -204,16 +225,16 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-commit hook executed".to_string(),
+                command: "run-pre-commit".to_string(),
                 parallel_execution_allowed: false,
             }],
         );
         let config = SmeeConfig { hooks: hooks_map };
-        let runner = FakeRunner::new(vec![PlannedResult::Exit(Some(0))]);
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(0))]);
 
         let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
         assert!(result.is_ok());
-        assert_eq!(runner.calls(), vec!["echo Pre-commit hook executed"]);
+        assert_eq!(runner.calls(), vec!["run-pre-commit"]);
     }
 
     #[test]
@@ -227,7 +248,7 @@ mod tests {
             }],
         );
         let config = SmeeConfig { hooks: hooks_map };
-        let runner = FakeRunner::new(vec![PlannedResult::Exit(Some(127))]);
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(127))]);
 
         let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
         assert!(matches!(result, Err(Error::ExecutionFailed(127))));
@@ -236,7 +257,9 @@ mod tests {
     #[test]
     fn given_spawn_error_when_executing_then_command_spawn_failed_error_contains_redacted_command()
     {
-        let runner = FakeRunner::new(vec![PlannedResult::SpawnError(io::ErrorKind::NotFound)]);
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
+            io::ErrorKind::NotFound,
+        )]);
 
         let result = execute_command("deploy --token super-secret-value", &runner);
 
@@ -251,7 +274,9 @@ mod tests {
 
     #[test]
     fn given_spawn_error_with_env_prefix_when_executing_then_redaction_hides_env_assignments() {
-        let runner = FakeRunner::new(vec![PlannedResult::SpawnError(io::ErrorKind::NotFound)]);
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
+            io::ErrorKind::NotFound,
+        )]);
 
         let result = execute_command("TOKEN=super-secret API_KEY=123 deploy --arg value", &runner);
 
@@ -267,14 +292,14 @@ mod tests {
 
     #[test]
     fn given_empty_command_when_executing_then_no_command_defined_error() {
-        let runner = FakeRunner::new(vec![]);
+        let runner = FakeRunner::with_default_outcomes(vec![]);
         let result = execute_command("   ", &runner);
         assert!(matches!(result, Err(Error::NoCommandDefined)));
     }
 
     #[test]
     fn given_missing_exit_code_when_executing_then_terminated_by_signal_error() {
-        let runner = FakeRunner::new(vec![PlannedResult::Exit(None)]);
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(None)]);
         let result = execute_command("run-hook", &runner);
         assert!(matches!(result, Err(Error::ExecutionTerminatedBySignal)));
     }
@@ -284,28 +309,45 @@ mod tests {
         let mut hooks_map = HashMap::new();
         hooks_map.insert(
             LifeCyclePhase::PreCommit,
-            (1..10)
-                .map(|_| HookDefinition {
-                    command: "parallel".to_string(),
+            ["parallel-1", "parallel-2", "parallel-3", "parallel-4"]
+                .iter()
+                .map(|command| HookDefinition {
+                    command: command.to_string(),
                     parallel_execution_allowed: true,
                 })
                 .collect(),
         );
         let config = SmeeConfig { hooks: hooks_map };
-        let runner = FakeRunner::new((1..10).map(|_| PlannedResult::Exit(Some(0))).collect());
+        let runner = FakeRunner::with_command_outcomes(vec![
+            ("parallel-1", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-2", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-3", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-4", vec![PlannedResult::Exit(Some(0))]),
+        ]);
 
         let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
 
         assert!(result.is_ok());
-        assert_eq!(runner.calls().len(), 9);
+        let mut calls = runner.calls();
+        calls.sort();
+        assert_eq!(
+            calls,
+            vec![
+                "parallel-1".to_string(),
+                "parallel-2".to_string(),
+                "parallel-3".to_string(),
+                "parallel-4".to_string()
+            ]
+        );
     }
 
     #[test]
     fn given_multiple_commands_when_parallel_and_sequential_execution_then_sequential_runs_first() {
         let mut hooks_map = HashMap::new();
-        let mut hook_definitions: Vec<HookDefinition> = (1..4)
-            .map(|_| HookDefinition {
-                command: "parallel".to_string(),
+        let mut hook_definitions: Vec<HookDefinition> = ["parallel-1", "parallel-2", "parallel-3"]
+            .iter()
+            .map(|command| HookDefinition {
+                command: command.to_string(),
                 parallel_execution_allowed: true,
             })
             .collect();
@@ -320,7 +362,13 @@ mod tests {
 
         hooks_map.insert(LifeCyclePhase::PreCommit, hook_definitions);
         let config = SmeeConfig { hooks: hooks_map };
-        let runner = FakeRunner::new((1..6).map(|_| PlannedResult::Exit(Some(0))).collect());
+        let runner = FakeRunner::with_command_outcomes(vec![
+            ("sequential-1", vec![PlannedResult::Exit(Some(0))]),
+            ("sequential-2", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-1", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-2", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-3", vec![PlannedResult::Exit(Some(0))]),
+        ]);
 
         let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
         let calls = runner.calls();
@@ -329,6 +377,17 @@ mod tests {
         assert_eq!(calls.len(), 5);
         assert_eq!(calls[0], "sequential-1");
         assert_eq!(calls[1], "sequential-2");
+
+        let mut parallel_calls = calls[2..].to_vec();
+        parallel_calls.sort();
+        assert_eq!(
+            parallel_calls,
+            vec![
+                "parallel-1".to_string(),
+                "parallel-2".to_string(),
+                "parallel-3".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -343,11 +402,44 @@ mod tests {
                 parallel_execution_allowed: true,
             },
         ];
-        let runner = FakeRunner::new(vec![PlannedResult::Exit(Some(10))]);
+        let runner = FakeRunner::with_command_outcomes(vec![
+            ("sequential", vec![PlannedResult::Exit(Some(10))]),
+            ("parallel", vec![PlannedResult::Exit(Some(0))]),
+        ]);
 
         let result = run_hooks_with_runner(&hooks, &runner);
 
         assert!(matches!(result, Err(Error::ExecutionFailed(10))));
         assert_eq!(runner.calls(), vec!["sequential"]);
+    }
+
+    #[test]
+    fn given_failed_parallel_hook_when_executing_then_error_is_propagated() {
+        let hooks = vec![
+            HookDefinition {
+                command: "sequential".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "parallel-ok".to_string(),
+                parallel_execution_allowed: true,
+            },
+            HookDefinition {
+                command: "parallel-fail".to_string(),
+                parallel_execution_allowed: true,
+            },
+        ];
+        let runner = FakeRunner::with_command_outcomes(vec![
+            ("sequential", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-ok", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-fail", vec![PlannedResult::Exit(Some(23))]),
+        ]);
+
+        let result = run_hooks_with_runner(&hooks, &runner);
+        let calls = runner.calls();
+
+        assert!(matches!(result, Err(Error::ExecutionFailed(23))));
+        assert_eq!(calls[0], "sequential");
+        assert!(calls.iter().any(|call| call == "parallel-fail"));
     }
 }
