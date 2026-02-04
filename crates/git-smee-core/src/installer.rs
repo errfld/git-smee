@@ -28,6 +28,12 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("Failed to write config file '{path}': {source}")]
+    FailedToWriteConfigFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     // add installer-specific errors here later
     #[error("A platform-specific error occurred: {0}")]
     PlatformError(#[from] crate::platform::Error),
@@ -239,14 +245,15 @@ impl FileSystemHookInstaller {
                     source,
                 })?;
         let header = &header_buf[..bytes_read];
+        let marker_hash = format!("# {MANAGED_FILE_MARKER}");
+        let marker_rem = format!("REM {MANAGED_FILE_MARKER}");
 
         for line in header.split(|byte| *byte == b'\n').take(8) {
             let normalized_line = line.strip_suffix(b"\r").unwrap_or(line);
             if normalized_line.is_empty() {
-                break;
+                continue;
             }
-            if normalized_line == format!("# {MANAGED_FILE_MARKER}").as_bytes()
-                || normalized_line == format!("REM {MANAGED_FILE_MARKER}").as_bytes()
+            if normalized_line == marker_hash.as_bytes() || normalized_line == marker_rem.as_bytes()
             {
                 return Ok(true);
             }
@@ -270,9 +277,11 @@ impl HookInstaller for FileSystemHookInstaller {
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error> {
         let config_path = self.repository_root.join(DEFAULT_CONFIG_FILE_NAME);
         self.ensure_can_write_config(&config_path)?;
-        fs::write(&config_path, config_content).map_err(|source| Error::FailedToWriteHook {
-            path: config_path.to_string_lossy().to_string(),
-            source,
+        fs::write(&config_path, config_content).map_err(|source| {
+            Error::FailedToWriteConfigFile {
+                path: config_path.to_string_lossy().to_string(),
+                source,
+            }
         })?;
         Ok(config_path)
     }
