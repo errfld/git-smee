@@ -6,7 +6,7 @@ use std::{
 
 use git_smee_core::{
     DEFAULT_CONFIG_FILE_NAME, SmeeConfig,
-    installer::{self, Error, FileSystemHookInstaller},
+    installer::{self, Error, FileSystemHookInstaller, HookInstaller, MANAGED_FILE_MARKER},
 };
 
 #[test]
@@ -114,6 +114,131 @@ fn given_missing_custom_hooks_path_when_creating_installer_then_error_includes_r
         Ok(_) => panic!("expected hooks-dir-not-found error"),
         Err(error) => panic!("unexpected error: {error}"),
     }
+}
+
+#[test]
+fn given_unmanaged_existing_hook_when_installing_without_force_then_error_and_file_unchanged() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_commit = hooks_path.join("pre-commit");
+    let unmanaged_content = "#!/usr/bin/env sh\necho 'custom unmanaged hook'\n";
+    fs::write(&pre_commit, unmanaged_content).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let result = installer::install_hooks(&config, &installer);
+
+    assert!(matches!(
+        result,
+        Err(Error::RefusingToOverwriteUnmanagedHookFile { .. })
+    ));
+    assert_eq!(fs::read_to_string(pre_commit).unwrap(), unmanaged_content);
+}
+
+#[test]
+fn given_managed_existing_hook_when_installing_without_force_then_it_is_overwritten() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_commit = hooks_path.join("pre-commit");
+    let managed_stale_content =
+        format!("#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\necho 'stale managed hook'\n");
+    fs::write(&pre_commit, managed_stale_content).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    installer::install_hooks(&config, &installer).unwrap();
+
+    let installed = fs::read_to_string(pre_commit).unwrap();
+    assert!(installed.contains("git smee run pre-commit"));
+}
+
+#[test]
+fn given_unmanaged_existing_hook_when_installing_with_force_then_it_is_overwritten() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_commit = hooks_path.join("pre-commit");
+    fs::write(
+        &pre_commit,
+        "#!/usr/bin/env sh\necho 'custom unmanaged hook'\n",
+    )
+    .unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path_with_force(repo.clone(), true).unwrap();
+    installer::install_hooks(&config, &installer).unwrap();
+
+    let installed = fs::read_to_string(pre_commit).unwrap();
+    assert!(installed.contains("git smee run pre-commit"));
+}
+
+#[test]
+fn given_existing_config_when_initializing_without_force_then_refuses_overwrite() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+
+    let config_path = repo.join(DEFAULT_CONFIG_FILE_NAME);
+    fs::write(&config_path, "[[pre-commit]]\ncommand = \"echo custom\"\n").unwrap();
+
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let result = installer.install_config_file("[[pre-commit]]\ncommand = \"echo default\"\n");
+
+    assert!(matches!(
+        result,
+        Err(Error::RefusingToOverwriteUnmanagedConfigFile { .. })
+    ));
+}
+
+#[test]
+fn given_managed_existing_config_when_initializing_without_force_then_refuses_overwrite() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+
+    let config_path = repo.join(DEFAULT_CONFIG_FILE_NAME);
+    fs::write(
+        &config_path,
+        format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo custom\"\n"),
+    )
+    .unwrap();
+
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let result = installer.install_config_file("[[pre-commit]]\ncommand = \"echo default\"\n");
+
+    assert!(matches!(
+        result,
+        Err(Error::RefusingToOverwriteManagedConfigFile { .. })
+    ));
+}
+
+#[test]
+fn given_existing_config_when_initializing_with_force_then_overwrites() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+
+    let config_path = repo.join(DEFAULT_CONFIG_FILE_NAME);
+    fs::write(&config_path, "[[pre-commit]]\ncommand = \"echo custom\"\n").unwrap();
+
+    let installer = FileSystemHookInstaller::from_path_with_force(repo.clone(), true).unwrap();
+    installer
+        .install_config_file("[[pre-commit]]\ncommand = \"echo default\"\n")
+        .unwrap();
+
+    let updated = fs::read_to_string(config_path).unwrap();
+    assert!(updated.contains("echo default"));
 }
 
 fn init_repo(repo: &Path) {

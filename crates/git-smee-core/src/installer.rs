@@ -1,6 +1,17 @@
 use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, platform::Platform};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
+
+/// Marker string used to identify files managed by git-smee.
+pub const MANAGED_FILE_MARKER: &str = "THIS FILE IS MANAGED BY git-smee";
+
+/// Prefixes content with a marker header so git-smee can identify managed files later.
+pub fn with_managed_header(content: &str) -> String {
+    format!("# {MANAGED_FILE_MARKER}\n\n{content}")
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -27,6 +38,24 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "Refusing to overwrite unmanaged hook file '{path}'. Re-run with --force to overwrite."
+    )]
+    RefusingToOverwriteUnmanagedHookFile { path: String },
+    #[error(
+        "Refusing to overwrite existing unmanaged config file '{path}'. Re-run with --force to overwrite."
+    )]
+    RefusingToOverwriteUnmanagedConfigFile { path: String },
+    #[error(
+        "Refusing to overwrite existing managed config file '{path}'. Re-run with --force to overwrite."
+    )]
+    RefusingToOverwriteManagedConfigFile { path: String },
+    #[error("Failed to read existing file '{path}' while checking managed marker: {source}")]
+    FailedToReadExistingFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Behavioral definition of a hook installer.
@@ -41,6 +70,7 @@ pub trait HookInstaller {
 pub struct FileSystemHookInstaller {
     repository_root: PathBuf,
     hooks_dir: PathBuf,
+    force_overwrite: bool,
 }
 
 impl FileSystemHookInstaller {
@@ -102,7 +132,13 @@ impl FileSystemHookInstaller {
     /// drop(installer);
     /// ```
     pub fn from_default() -> Result<Self, Error> {
-        Self::from_path(PathBuf::from("./"))
+        Self::from_default_with_force(false)
+    }
+
+    /// Creates a hook installer using `./` as the repository root and a
+    /// configurable overwrite policy.
+    pub fn from_default_with_force(force_overwrite: bool) -> Result<Self, Error> {
+        Self::from_path_with_force(PathBuf::from("./"), force_overwrite)
     }
 
     /// Creates a `FileSystemHookInstaller` rooted at the provided repository path.
@@ -128,6 +164,15 @@ impl FileSystemHookInstaller {
     /// drop(installer);
     /// ```
     pub fn from_path(repository_root: PathBuf) -> Result<Self, Error> {
+        Self::from_path_with_force(repository_root, false)
+    }
+
+    /// Creates a `FileSystemHookInstaller` rooted at the provided repository path and
+    /// with explicit overwrite behavior.
+    pub fn from_path_with_force(
+        repository_root: PathBuf,
+        force_overwrite: bool,
+    ) -> Result<Self, Error> {
         let repository_root =
             repository_root
                 .canonicalize()
@@ -145,17 +190,58 @@ impl FileSystemHookInstaller {
         Ok(Self {
             repository_root,
             hooks_dir: hooks_path,
+            force_overwrite,
         })
     }
 
     pub fn effective_hooks_dir(&self) -> &PathBuf {
         &self.hooks_dir
     }
+
+    fn ensure_can_write_hook(&self, hook_file: &Path) -> Result<(), Error> {
+        if !hook_file.exists() || self.force_overwrite {
+            return Ok(());
+        }
+
+        if Self::is_managed_file(hook_file)? {
+            return Ok(());
+        }
+
+        Err(Error::RefusingToOverwriteUnmanagedHookFile {
+            path: hook_file.to_string_lossy().to_string(),
+        })
+    }
+
+    fn ensure_can_write_config(&self, config_file: &Path) -> Result<(), Error> {
+        if !config_file.exists() || self.force_overwrite {
+            return Ok(());
+        }
+
+        let path = config_file.to_string_lossy().to_string();
+        if Self::is_managed_file(config_file)? {
+            return Err(Error::RefusingToOverwriteManagedConfigFile { path });
+        }
+
+        Err(Error::RefusingToOverwriteUnmanagedConfigFile { path })
+    }
+
+    fn is_managed_file(path: &Path) -> Result<bool, Error> {
+        let contents = fs::read(path).map_err(|source| Error::FailedToReadExistingFile {
+            path: path.to_string_lossy().to_string(),
+            source,
+        })?;
+
+        let marker = MANAGED_FILE_MARKER.as_bytes();
+        Ok(contents
+            .windows(marker.len())
+            .any(|window| window == marker))
+    }
 }
 
 impl HookInstaller for FileSystemHookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
         let hook_file = self.hooks_dir.join(hook_name);
+        self.ensure_can_write_hook(&hook_file)?;
         fs::write(&hook_file, hook_content).map_err(|source| Error::FailedToWriteHook {
             path: hook_file.to_string_lossy().to_string(),
             source,
@@ -165,6 +251,7 @@ impl HookInstaller for FileSystemHookInstaller {
 
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error> {
         let config_path = self.repository_root.join(DEFAULT_CONFIG_FILE_NAME);
+        self.ensure_can_write_config(&config_path)?;
         fs::write(&config_path, config_content).map_err(|source| Error::FailedToWriteHook {
             path: config_path.to_string_lossy().to_string(),
             source,
@@ -367,5 +454,14 @@ mod tests {
                 .load(Ordering::SeqCst),
             1
         );
+    }
+
+    #[test]
+    fn given_content_when_adding_managed_header_then_marker_is_present() {
+        let config = "[[pre-commit]]\ncommand = \"cargo test\"";
+        let managed = with_managed_header(config);
+
+        assert!(managed.contains(MANAGED_FILE_MARKER));
+        assert!(managed.contains(config));
     }
 }

@@ -22,23 +22,29 @@ enum Command {
         name = "install",
         about = "Install git hooks from {.git-smee.toml} into Git's effective hooks directory"
     )]
-    Install,
+    Install {
+        #[arg(long, help = "Overwrite existing unmanaged hook files")]
+        force: bool,
+    },
     #[command(name = "run", about = "Run a specific git hook")]
     Run { hook: String },
     #[command(
         name = "init",
         about = "Initialize a .git-smee.toml configuration file"
     )]
-    Initialize,
+    Initialize {
+        #[arg(long, help = "Overwrite an existing .git-smee.toml file")]
+        force: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Install => {
+        Command::Install { force } => {
             repository::ensure_in_repo_root()?;
-            let installer = installer::FileSystemHookInstaller::from_default()?;
+            let installer = installer::FileSystemHookInstaller::from_default_with_force(force)?;
             println!("Installing hooks...");
             let config = read_config_file()?;
             installer::install_hooks(&config, &installer)?;
@@ -52,11 +58,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let phase = config::LifeCyclePhase::from_str(&hook)?;
             executor::execute_hook(&config, phase).map_err(Box::from)
         }
-        Command::Initialize => {
+        Command::Initialize { force } => {
             repository::ensure_in_repo_root()?;
-            let installer = installer::FileSystemHookInstaller::from_default()?;
+            let installer = installer::FileSystemHookInstaller::from_default_with_force(force)?;
             println!("Initializing {DEFAULT_CONFIG_FILE_NAME} configuration file...");
             let default_config: String = (&config::SmeeConfig::default()).try_into()?;
+            let default_config = installer::with_managed_header(&default_config);
             installer.install_config_file(&default_config)?;
             Ok(())
         }
