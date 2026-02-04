@@ -113,7 +113,10 @@ fn execute_command(command: &str, runner: &impl CommandRunner) -> Result<(), Err
 
 fn redact_command(command: &str) -> String {
     let mut tokens = command.split_whitespace();
-    let executable = tokens.next().unwrap_or("<empty>");
+    let executable = tokens
+        .by_ref()
+        .find(|token| !is_inline_env_assignment(token))
+        .unwrap_or("<redacted>");
     let mut redacted = executable.to_string();
     if redacted.len() > 80 {
         redacted.truncate(77);
@@ -123,6 +126,10 @@ fn redact_command(command: &str) -> String {
         redacted.push_str(" <args redacted>");
     }
     redacted
+}
+
+fn is_inline_env_assignment(token: &str) -> bool {
+    token.contains('=') && !token.starts_with('-') && !token.contains('/') && !token.contains('\\')
 }
 
 #[cfg(test)]
@@ -237,6 +244,22 @@ mod tests {
             Err(Error::CommandSpawnFailed { command, source }) => {
                 assert_eq!(command, "deploy <args redacted>");
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            _ => panic!("expected CommandSpawnFailed"),
+        }
+    }
+
+    #[test]
+    fn given_spawn_error_with_env_prefix_when_executing_then_redaction_hides_env_assignments() {
+        let runner = FakeRunner::new(vec![PlannedResult::SpawnError(io::ErrorKind::NotFound)]);
+
+        let result = execute_command("TOKEN=super-secret API_KEY=123 deploy --arg value", &runner);
+
+        match result {
+            Err(Error::CommandSpawnFailed { command, .. }) => {
+                assert_eq!(command, "deploy <args redacted>");
+                assert!(!command.contains("super-secret"));
+                assert!(!command.contains("API_KEY"));
             }
             _ => panic!("expected CommandSpawnFailed"),
         }
