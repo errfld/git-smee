@@ -1,6 +1,7 @@
 use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, platform::Platform};
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -226,15 +227,32 @@ impl FileSystemHookInstaller {
     }
 
     fn is_managed_file(path: &Path) -> Result<bool, Error> {
-        let contents = fs::read(path).map_err(|source| Error::FailedToReadExistingFile {
+        let mut file = fs::File::open(path).map_err(|source| Error::FailedToReadExistingFile {
             path: path.to_string_lossy().to_string(),
             source,
         })?;
+        let mut header_buf = [0_u8; 1024];
+        let bytes_read =
+            file.read(&mut header_buf)
+                .map_err(|source| Error::FailedToReadExistingFile {
+                    path: path.to_string_lossy().to_string(),
+                    source,
+                })?;
+        let header = &header_buf[..bytes_read];
 
-        let marker = MANAGED_FILE_MARKER.as_bytes();
-        Ok(contents
-            .windows(marker.len())
-            .any(|window| window == marker))
+        for line in header.split(|byte| *byte == b'\n').take(8) {
+            let normalized_line = line.strip_suffix(b"\r").unwrap_or(line);
+            if normalized_line.is_empty() {
+                break;
+            }
+            if normalized_line == format!("# {MANAGED_FILE_MARKER}").as_bytes()
+                || normalized_line == format!("REM {MANAGED_FILE_MARKER}").as_bytes()
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 }
 
