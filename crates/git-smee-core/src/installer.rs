@@ -21,7 +21,13 @@ pub fn with_managed_header(content: &str) -> String {
 ///
 /// If content starts with a shebang (`#!`), the marker is inserted after the shebang
 /// so script executability is preserved.
+///
+/// Supported prefixes are `#` (Unix-style) and `REM` (Windows batch).
 pub fn with_managed_header_with_prefix(content: &str, comment_prefix: &str) -> String {
+    assert!(
+        matches!(comment_prefix, "#" | "REM"),
+        "unsupported managed header prefix: {comment_prefix}"
+    );
     let marker_line = format!("{comment_prefix} {MANAGED_FILE_MARKER}");
     if content.starts_with("#!") {
         if let Some(shebang_end) = content.find('\n') {
@@ -539,5 +545,11 @@ mod tests {
         let managed = with_managed_header_with_prefix(config, "REM");
 
         assert!(managed.starts_with("REM THIS FILE IS MANAGED BY git-smee"));
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported managed header prefix")]
+    fn given_unsupported_prefix_when_adding_managed_header_then_it_panics() {
+        let _ = with_managed_header_with_prefix("echo test", "//");
     }
 }
