@@ -103,3 +103,59 @@ command = "cargo fmt"
         _ => panic!("expected parse error for unknown hook keys"),
     }
 }
+
+#[test]
+fn given_whitespace_command_when_reading_then_validation_error_with_hook_and_entry() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_path = temp_dir.path().join(".git-smee.toml");
+    let mut file = fs::File::create(&config_path).expect("failed to create config fixture");
+    writeln!(
+        file,
+        r#"
+[[pre-commit]]
+command = "cargo test"
+
+[[pre-commit]]
+command = "   "
+"#
+    )
+    .expect("failed to write config fixture");
+
+    let result = SmeeConfig::from_toml(&config_path);
+
+    assert!(matches!(
+        result,
+        Err(config::Error::ValidationError(
+            config::ValidationError::EmptyCommand {
+                hook_name,
+                entry_index
+            }
+        )) if hook_name == "pre-commit" && entry_index == 2
+    ));
+}
+
+#[test]
+fn given_unknown_hook_definition_field_when_reading_then_parse_error_mentions_field() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_path = temp_dir.path().join(".git-smee.toml");
+    let mut file = fs::File::create(&config_path).expect("failed to create config fixture");
+    writeln!(
+        file,
+        r#"
+[[pre-commit]]
+command = "cargo test"
+unexpected = "value"
+"#
+    )
+    .expect("failed to write config fixture");
+
+    let result = SmeeConfig::from_toml(&config_path);
+
+    match result {
+        Err(config::Error::ParseError(error)) => {
+            let message = error.to_string();
+            assert!(message.contains("unexpected"));
+        }
+        _ => panic!("expected parse error for unknown hook definition fields"),
+    }
+}
