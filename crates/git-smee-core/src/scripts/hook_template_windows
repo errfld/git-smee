@@ -9,9 +9,9 @@ if exist "%GIT_SMEE_BIN%" (
   "%GIT_SMEE_BIN%" --config "%GIT_SMEE_CONFIG%" run {hook}
 ) else (
   where git-smee >nul 2>nul
-  if %ERRORLEVEL% EQU 0 (
-    git-smee --config "%GIT_SMEE_CONFIG%" run {hook}
-  ) else (
+  if errorlevel 1 (
     git smee --config "%GIT_SMEE_CONFIG%" run {hook}
+  ) else (
+    git-smee --config "%GIT_SMEE_CONFIG%" run {hook}
   )
 )

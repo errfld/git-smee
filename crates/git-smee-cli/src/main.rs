@@ -7,7 +7,7 @@ use std::{
 use clap::Parser;
 use git_smee_core::{
     DEFAULT_CONFIG_FILE_NAME, SmeeConfig, config, executor,
-    installer::{self, HookScriptOptions},
+    installer::{self, HookInstaller, HookScriptOptions},
     repository,
 };
 
