@@ -9,9 +9,26 @@ use thiserror::Error;
 /// Marker string used to identify files managed by git-smee.
 pub const MANAGED_FILE_MARKER: &str = "THIS FILE IS MANAGED BY git-smee";
 
-/// Prefixes content with a marker header so git-smee can identify managed files later.
+/// Prefixes content with a managed marker using `#` comments.
+///
+/// If content starts with a shebang (`#!`), the marker is inserted after the shebang
+/// so script executability is preserved.
 pub fn with_managed_header(content: &str) -> String {
-    format!("# {MANAGED_FILE_MARKER}\n\n{content}")
+    with_managed_header_with_prefix(content, "#")
+}
+
+/// Prefixes content with a managed marker using the provided comment prefix.
+///
+/// If content starts with a shebang (`#!`), the marker is inserted after the shebang
+/// so script executability is preserved.
+pub fn with_managed_header_with_prefix(content: &str, comment_prefix: &str) -> String {
+    let marker_line = format!("{comment_prefix} {MANAGED_FILE_MARKER}");
+    if let Some(shebang_end) = content.find('\n').filter(|_| content.starts_with("#!")) {
+        let (shebang, rest) = content.split_at(shebang_end + 1);
+        return format!("{shebang}{marker_line}\n\n{rest}");
+    }
+
+    format!("{marker_line}\n\n{content}")
 }
 
 #[derive(Debug, Error)]
@@ -490,5 +507,23 @@ mod tests {
 
         assert!(managed.contains(MANAGED_FILE_MARKER));
         assert!(managed.contains(config));
+    }
+
+    #[test]
+    fn given_shebang_content_when_adding_managed_header_then_shebang_stays_first_line() {
+        let script = "#!/usr/bin/env sh\necho test\n";
+        let managed = with_managed_header(script);
+
+        let mut lines = managed.lines();
+        assert_eq!(lines.next(), Some("#!/usr/bin/env sh"));
+        assert_eq!(lines.next(), Some("# THIS FILE IS MANAGED BY git-smee"));
+    }
+
+    #[test]
+    fn given_custom_prefix_when_adding_managed_header_then_prefix_is_used() {
+        let config = "[[pre-commit]]\ncommand = \"cargo test\"";
+        let managed = with_managed_header_with_prefix(config, "REM");
+
+        assert!(managed.starts_with("REM THIS FILE IS MANAGED BY git-smee"));
     }
 }
