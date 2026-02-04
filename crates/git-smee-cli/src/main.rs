@@ -92,10 +92,10 @@ fn resolve_config_path(cli_config: Option<PathBuf>) -> PathBuf {
     if let Some(path) = cli_config {
         return path;
     }
-    if let Ok(path_from_env) = env::var("GIT_SMEE_CONFIG") {
-        if !path_from_env.trim().is_empty() {
-            return PathBuf::from(path_from_env);
-        }
+    if let Ok(path_from_env) = env::var("GIT_SMEE_CONFIG")
+        && !path_from_env.trim().is_empty()
+    {
+        return PathBuf::from(path_from_env);
     }
     PathBuf::from_str(DEFAULT_CONFIG_FILE_NAME).expect("default config path should be valid")
 }
@@ -114,10 +114,10 @@ fn write_config_file(config_path: &Path, content: &str, force: bool) -> Result<(
             ),
         ));
     }
-    if let Some(parent) = config_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = config_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     fs::write(config_path, content)
 }
