@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::{fs, io::Write};
 
 use git_smee_core::{
     SmeeConfig,
@@ -49,4 +50,56 @@ fn given_malformed_toml_when_reading_then_error() {
     let path = PathBuf::from("tests/fixtures/malformed_git-smee_config.toml");
     let result = SmeeConfig::from_toml(&path);
     assert!(matches!(result, Err(config::Error::ParseError(_))));
+}
+
+#[test]
+fn given_unknown_hook_key_when_reading_then_actionable_parse_error() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_path = temp_dir.path().join(".git-smee.toml");
+    let mut file = fs::File::create(&config_path).expect("failed to create config fixture");
+    writeln!(
+        file,
+        r#"
+[[pre-commmit]]
+command = "cargo test"
+"#
+    )
+    .expect("failed to write config fixture");
+
+    let result = SmeeConfig::from_toml(&config_path);
+
+    match result {
+        Err(config::Error::ParseError(error)) => {
+            assert!(error.to_string().contains("pre-commmit"));
+        }
+        _ => panic!("expected parse error for unknown hook key"),
+    }
+}
+
+#[test]
+fn given_multiple_unknown_hook_keys_when_reading_then_parse_fails() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_path = temp_dir.path().join(".git-smee.toml");
+    let mut file = fs::File::create(&config_path).expect("failed to create config fixture");
+    writeln!(
+        file,
+        r#"
+[[pre-commmit]]
+command = "cargo test"
+
+[[pre-puush]]
+command = "cargo fmt"
+"#
+    )
+    .expect("failed to write config fixture");
+
+    let result = SmeeConfig::from_toml(&config_path);
+
+    match result {
+        Err(config::Error::ParseError(error)) => {
+            let message = error.to_string();
+            assert!(message.contains("pre-commmit") || message.contains("pre-puush"));
+        }
+        _ => panic!("expected parse error for unknown hook keys"),
+    }
 }

@@ -43,4 +43,5 @@ fn given_simple_config_when_installing_hooks_then_no_error() {
             .unwrap()
             .contains("git smee run pre-push")
     );
+    assert!(!hooks_dir.join("unknown").exists());
 }

@@ -120,9 +120,6 @@ pub enum LifeCyclePhase {
     PostUpdate,
     FsmonitorWatchman,
     PostIndexChange,
-
-    #[serde(other)]
-    Unknown,
 }
 
 impl FromStr for LifeCyclePhase {
@@ -176,7 +173,6 @@ impl fmt::Display for LifeCyclePhase {
             LifeCyclePhase::PostUpdate => "post-update",
             LifeCyclePhase::FsmonitorWatchman => "fsmonitor-watchman",
             LifeCyclePhase::PostIndexChange => "post-index-change",
-            LifeCyclePhase::Unknown => "unknown",
         };
         f.write_str(s)
     }
@@ -229,6 +225,40 @@ mod tests {
             .expect("Second Hook Definition should be present");
         assert_eq!(hook_definition.command, "cargo test");
         assert!(!hook_definition.parallel_execution_allowed);
+    }
+
+    #[test]
+    fn given_unknown_hook_key_when_deserializing_then_parse_error_contains_invalid_key() {
+        let invalid_toml = r#"
+        [[pre-commmit]]
+        command = "cargo test"
+        "#;
+
+        let message = match toml::from_str::<SmeeConfig>(invalid_toml) {
+            Ok(_) => panic!("expected parse error for unknown hook key"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(message.contains("pre-commmit"));
+    }
+
+    #[test]
+    fn given_multiple_unknown_hook_keys_when_deserializing_then_parse_fails_before_config_is_built()
+    {
+        let invalid_toml = r#"
+        [[pre-commmit]]
+        command = "cargo test"
+
+        [[pre-puush]]
+        command = "cargo fmt"
+        "#;
+
+        let message = match toml::from_str::<SmeeConfig>(invalid_toml) {
+            Ok(_) => panic!("expected parse error for unknown hook keys"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(message.contains("pre-commmit") || message.contains("pre-puush"));
     }
 
     #[test]
