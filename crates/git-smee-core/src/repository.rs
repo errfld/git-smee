@@ -1,4 +1,8 @@
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -7,6 +11,19 @@ pub enum Error {
     NotInGitRepository,
     #[error("Failed to change directory: {0}")]
     FailedToChangeDirectory(#[from] std::io::Error),
+    #[error("Failed to execute git: {0}")]
+    FailedToExecuteGit(std::io::Error),
+    #[error("Could not resolve git path '{git_path}' from '{repository_root}': {stderr}")]
+    FailedToResolveGitPath {
+        repository_root: String,
+        git_path: String,
+        stderr: String,
+    },
+    #[error("Git returned an empty path for '{git_path}' in repository '{repository_root}'")]
+    EmptyGitPath {
+        repository_root: String,
+        git_path: String,
+    },
 }
 
 /// Finds the git repository root by walking up from the current directory
@@ -78,10 +95,56 @@ pub fn ensure_in_repo_root() -> Result<(), Error> {
     env::set_current_dir(&git_root).map_err(Error::FailedToChangeDirectory)
 }
 
+/// Resolves a Git path (as interpreted by `git rev-parse --git-path`) from the
+/// given repository root.
+pub fn resolve_git_path(repository_root: &Path, git_path: &str) -> Result<PathBuf, Error> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository_root)
+        .arg("rev-parse")
+        .arg("--git-path")
+        .arg(git_path)
+        .output()
+        .map_err(Error::FailedToExecuteGit)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(Error::FailedToResolveGitPath {
+            repository_root: repository_root.display().to_string(),
+            git_path: git_path.to_string(),
+            stderr: if stderr.is_empty() {
+                format!("git exited with status {}", output.status)
+            } else {
+                stderr
+            },
+        });
+    }
+
+    let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw_path.is_empty() {
+        return Err(Error::EmptyGitPath {
+            repository_root: repository_root.display().to_string(),
+            git_path: git_path.to_string(),
+        });
+    }
+
+    let path = PathBuf::from(raw_path);
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(repository_root.join(path))
+    }
+}
+
+/// Resolves the effective hooks directory used by Git for the repository.
+pub fn resolve_hooks_path(repository_root: &Path) -> Result<PathBuf, Error> {
+    resolve_git_path(repository_root, "hooks")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, sync::Mutex};
+    use std::{fs, process::Command, sync::Mutex};
     use tempfile::TempDir;
 
     static CWD_MUTEX: Mutex<()> = Mutex::new(());
@@ -206,5 +269,97 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_standard_repo_when_resolving_hooks_path_then_returns_dot_git_hooks() {
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+
+        let hooks_path = resolve_hooks_path(temp_dir.path()).unwrap();
+
+        assert_eq!(hooks_path, temp_dir.path().join(".git").join("hooks"));
+    }
+
+    #[test]
+    fn given_custom_core_hooks_path_when_resolving_hooks_path_then_returns_custom_path() {
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        git(temp_dir.path(), &["config", "core.hooksPath", ".githooks"]);
+
+        let hooks_path = resolve_hooks_path(temp_dir.path()).unwrap();
+
+        assert_eq!(hooks_path, temp_dir.path().join(".githooks"));
+    }
+
+    #[test]
+    fn given_worktree_when_resolving_hooks_path_then_matches_git_output() {
+        let temp_dir = TempDir::new().unwrap();
+        let main_repo = temp_dir.path().join("main");
+        fs::create_dir(&main_repo).unwrap();
+        git(&main_repo, &["init"]);
+        fs::write(main_repo.join("README.md"), "test").unwrap();
+        git(&main_repo, &["add", "README.md"]);
+        git(
+            &main_repo,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "init",
+            ],
+        );
+
+        let worktree = temp_dir.path().join("wt");
+        git(
+            &main_repo,
+            &[
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "-b",
+                "wt-branch",
+            ],
+        );
+
+        let resolved = resolve_hooks_path(&worktree).unwrap();
+        let expected = git_output(&worktree, &["rev-parse", "--git-path", "hooks"]);
+        let expected_path = PathBuf::from(expected.trim());
+
+        assert_eq!(resolved, expected_path);
+    }
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn git_output(repo: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 }
