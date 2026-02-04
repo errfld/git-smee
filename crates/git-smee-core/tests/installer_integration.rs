@@ -160,6 +160,7 @@ fn git(repo: &Path, args: &[&str]) {
         repo.display(),
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(!hooks_dir.join("unknown").exists());
 }
 
 fn git_output(repo: &Path, args: &[&str]) -> String {
