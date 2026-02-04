@@ -23,9 +23,13 @@ pub fn with_managed_header(content: &str) -> String {
 /// so script executability is preserved.
 pub fn with_managed_header_with_prefix(content: &str, comment_prefix: &str) -> String {
     let marker_line = format!("{comment_prefix} {MANAGED_FILE_MARKER}");
-    if let Some(shebang_end) = content.find('\n').filter(|_| content.starts_with("#!")) {
-        let (shebang, rest) = content.split_at(shebang_end + 1);
-        return format!("{shebang}{marker_line}\n\n{rest}");
+    if content.starts_with("#!") {
+        if let Some(shebang_end) = content.find('\n') {
+            let (shebang, rest) = content.split_at(shebang_end + 1);
+            return format!("{shebang}{marker_line}\n\n{rest}");
+        }
+
+        return format!("{content}\n{marker_line}\n\n");
     }
 
     format!("{marker_line}\n\n{content}")
@@ -512,6 +516,16 @@ mod tests {
     #[test]
     fn given_shebang_content_when_adding_managed_header_then_shebang_stays_first_line() {
         let script = "#!/usr/bin/env sh\necho test\n";
+        let managed = with_managed_header(script);
+
+        let mut lines = managed.lines();
+        assert_eq!(lines.next(), Some("#!/usr/bin/env sh"));
+        assert_eq!(lines.next(), Some("# THIS FILE IS MANAGED BY git-smee"));
+    }
+
+    #[test]
+    fn given_shebang_without_newline_when_adding_managed_header_then_shebang_stays_first_line() {
+        let script = "#!/usr/bin/env sh";
         let managed = with_managed_header(script);
 
         let mut lines = managed.lines();
