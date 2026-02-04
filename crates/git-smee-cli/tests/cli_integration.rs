@@ -66,3 +66,27 @@ fn given_git_smee_when_install_then_hooks_are_present() {
         .success();
     test_repo.assert_hooks_installed(vec![LifeCyclePhase::PreCommit, LifeCyclePhase::PrePush]);
 }
+
+#[test]
+fn given_invalid_config_when_install_then_validation_error_is_reported() {
+    let test_repo = common::TestRepo::default();
+    std::fs::write(
+        test_repo.config_path(),
+        r#"
+[[pre-commit]]
+command = "cargo test"
+
+[[pre-commit]]
+command = "   "
+"#,
+    )
+    .expect("failed to write invalid config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .failure()
+        .stderr(contains("hook_name: \"pre-commit\""))
+        .stderr(contains("entry_index: 2"));
+}

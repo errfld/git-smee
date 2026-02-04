@@ -57,7 +57,30 @@ impl SmeeConfig {
             return Err(Error::NotATomlFileExtension);
         }
         let data = fs::read(path).map_err(Error::ReadError)?;
-        toml::from_slice(&data).map_err(Error::ParseError)
+        let config: SmeeConfig = toml::from_slice(&data).map_err(Error::ParseError)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        for (phase, hooks) in &self.hooks {
+            if hooks.is_empty() {
+                return Err(ValidationError::EmptyHookEntries {
+                    hook_name: phase.to_string(),
+                });
+            }
+
+            for (index, hook_definition) in hooks.iter().enumerate() {
+                if hook_definition.command.trim().is_empty() {
+                    return Err(ValidationError::EmptyCommand {
+                        hook_name: phase.to_string(),
+                        entry_index: index + 1,
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -92,6 +115,7 @@ impl TryFrom<&SmeeConfig> for String {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HookDefinition {
     pub command: String,
     #[serde(default = "bool::default")]
@@ -192,10 +216,21 @@ pub enum Error {
     ParseError(#[from] toml::de::Error),
     #[error("Failed to serialize the configuration: {0}")]
     SerializeError(#[from] toml::ser::Error),
-    #[error("Configuration validation error")]
-    ValidationError,
+    #[error("{0}")]
+    ValidationError(#[from] ValidationError),
     #[error("Unknown lifecycle phase: {0}")]
     UnknownLifeCyclePhase(String),
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ValidationError {
+    #[error("Hook '{hook_name}' has no entries")]
+    EmptyHookEntries { hook_name: String },
+    #[error("Hook '{hook_name}' entry #{entry_index}: command must not be empty")]
+    EmptyCommand {
+        hook_name: String,
+        entry_index: usize,
+    },
 }
 
 #[cfg(test)]
@@ -299,5 +334,65 @@ mod tests {
             let parsed_phase = LifeCyclePhase::from_str(&phase_str).unwrap();
             assert_eq!(&parsed_phase, phase);
         });
+    }
+
+    #[test]
+    fn given_empty_command_when_validating_then_error_contains_hook_and_entry() {
+        let mut hooks = HashMap::new();
+        hooks.insert(
+            LifeCyclePhase::PreCommit,
+            vec![
+                HookDefinition {
+                    command: "cargo test".to_string(),
+                    parallel_execution_allowed: false,
+                },
+                HookDefinition {
+                    command: "   ".to_string(),
+                    parallel_execution_allowed: false,
+                },
+            ],
+        );
+        let config = SmeeConfig { hooks };
+
+        let result = config.validate();
+
+        assert_eq!(
+            result,
+            Err(ValidationError::EmptyCommand {
+                hook_name: "pre-commit".to_string(),
+                entry_index: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn given_hook_without_entries_when_validating_then_error_contains_hook() {
+        let mut hooks = HashMap::new();
+        hooks.insert(LifeCyclePhase::PrePush, vec![]);
+        let config = SmeeConfig { hooks };
+
+        let result = config.validate();
+
+        assert_eq!(
+            result,
+            Err(ValidationError::EmptyHookEntries {
+                hook_name: "pre-push".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn given_valid_config_when_validating_then_success() {
+        let mut hooks = HashMap::new();
+        hooks.insert(
+            LifeCyclePhase::PreCommit,
+            vec![HookDefinition {
+                command: "cargo test".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks };
+
+        assert!(config.validate().is_ok());
     }
 }
