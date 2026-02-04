@@ -10,11 +10,23 @@ pub enum Error {
     HooksDirNotFound(String),
     #[error("No hooks present in the configuration to install")]
     NoHooksPresent,
-    #[error("Failed to write hook: {0}")]
-    FailedToWriteHook(#[from] std::io::Error),
+    #[error("Failed to write hook '{path}': {source}")]
+    FailedToWriteHook {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     // add installer-specific errors here later
     #[error("A platform-specific error occurred: {0}")]
     PlatformError(#[from] crate::platform::Error),
+    #[error("Failed to resolve the hooks directory: {0}")]
+    FailedToResolveHooksDirectory(#[from] crate::repository::Error),
+    #[error("Invalid repository root '{path}': {source}")]
+    InvalidRepositoryRoot {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Behavioral definition of a hook installer.
@@ -28,11 +40,12 @@ pub trait HookInstaller {
 
 pub struct FileSystemHookInstaller {
     repository_root: PathBuf,
+    hooks_dir: PathBuf,
 }
 
 impl FileSystemHookInstaller {
-    /// The relative path to the hooks directory (`.git/hooks`).
-    pub const HOOKS_DIR: &str = ".git/hooks";
+    /// Git path key used to resolve the effective hooks directory.
+    pub const HOOKS_GIT_PATH_KEY: &str = "hooks";
 
     /// Creates a hook installer rooted at the current working directory.
     ///
@@ -40,12 +53,15 @@ impl FileSystemHookInstaller {
     ///
     /// ```rust
     /// use git_smee_core::installer::FileSystemHookInstaller;
-    /// use std::{env, fs};
+    /// use std::{env, process::Command};
     /// use tempfile::tempdir;
     ///
     /// let temp_dir = tempdir().unwrap();
-    /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
-    /// fs::create_dir_all(&hooks_dir).unwrap();
+    /// Command::new("git")
+    ///     .arg("init")
+    ///     .current_dir(temp_dir.path())
+    ///     .output()
+    ///     .unwrap();
     ///
     /// let original_dir = env::current_dir().unwrap();
     /// env::set_current_dir(temp_dir.path()).unwrap();
@@ -53,7 +69,7 @@ impl FileSystemHookInstaller {
     /// let installer = FileSystemHookInstaller::new().unwrap();
     ///
     /// env::set_current_dir(&original_dir).unwrap();
-    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// assert!(installer.effective_hooks_dir().exists());
     /// drop(installer);
     /// ```
     pub fn new() -> Result<Self, Error> {
@@ -66,12 +82,15 @@ impl FileSystemHookInstaller {
     ///
     /// ```rust
     /// use git_smee_core::installer::FileSystemHookInstaller;
-    /// use std::{env, fs};
+    /// use std::{env, process::Command};
     /// use tempfile::tempdir;
     ///
     /// let temp_dir = tempdir().unwrap();
-    /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
-    /// fs::create_dir_all(&hooks_dir).unwrap();
+    /// Command::new("git")
+    ///     .arg("init")
+    ///     .current_dir(temp_dir.path())
+    ///     .output()
+    ///     .unwrap();
     ///
     /// let original_dir = env::current_dir().unwrap();
     /// env::set_current_dir(temp_dir.path()).unwrap();
@@ -79,7 +98,7 @@ impl FileSystemHookInstaller {
     /// let installer = FileSystemHookInstaller::from_default().unwrap();
     ///
     /// env::set_current_dir(&original_dir).unwrap();
-    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// assert!(installer.effective_hooks_dir().exists());
     /// drop(installer);
     /// ```
     pub fn from_default() -> Result<Self, Error> {
@@ -94,38 +113,62 @@ impl FileSystemHookInstaller {
     ///
     /// ```rust
     /// use git_smee_core::installer::FileSystemHookInstaller;
-    /// use std::fs;
+    /// use std::process::Command;
     /// use tempfile::tempdir;
     ///
     /// let temp_dir = tempdir().unwrap();
-    /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
-    /// fs::create_dir_all(&hooks_dir).unwrap();
+    /// Command::new("git")
+    ///     .arg("init")
+    ///     .current_dir(temp_dir.path())
+    ///     .output()
+    ///     .unwrap();
     ///
     /// let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf()).unwrap();
-    /// assert_eq!(FileSystemHookInstaller::HOOKS_DIR, ".git/hooks");
+    /// assert!(installer.effective_hooks_dir().exists());
     /// drop(installer);
     /// ```
     pub fn from_path(repository_root: PathBuf) -> Result<Self, Error> {
-        let hooks_path = repository_root.join(Self::HOOKS_DIR);
+        let repository_root =
+            repository_root
+                .canonicalize()
+                .map_err(|source| Error::InvalidRepositoryRoot {
+                    path: repository_root.to_string_lossy().to_string(),
+                    source,
+                })?;
+        let hooks_path =
+            crate::repository::resolve_git_path(&repository_root, Self::HOOKS_GIT_PATH_KEY)?;
         if !hooks_path.exists() || !hooks_path.is_dir() {
             return Err(Error::HooksDirNotFound(
                 hooks_path.to_string_lossy().to_string(),
             ));
         }
-        Ok(Self { repository_root })
+        Ok(Self {
+            repository_root,
+            hooks_dir: hooks_path,
+        })
+    }
+
+    pub fn effective_hooks_dir(&self) -> &PathBuf {
+        &self.hooks_dir
     }
 }
 
 impl HookInstaller for FileSystemHookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
-        let hook_file = self.repository_root.join(Self::HOOKS_DIR).join(hook_name);
-        fs::write(&hook_file, hook_content).map_err(Error::FailedToWriteHook)?;
+        let hook_file = self.hooks_dir.join(hook_name);
+        fs::write(&hook_file, hook_content).map_err(|source| Error::FailedToWriteHook {
+            path: hook_file.to_string_lossy().to_string(),
+            source,
+        })?;
         Ok(hook_file)
     }
 
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error> {
         let config_path = self.repository_root.join(DEFAULT_CONFIG_FILE_NAME);
-        fs::write(&config_path, config_content).map_err(Error::FailedToWriteHook)?;
+        fs::write(&config_path, config_content).map_err(|source| Error::FailedToWriteHook {
+            path: config_path.to_string_lossy().to_string(),
+            source,
+        })?;
         Ok(config_path)
     }
 }
@@ -138,12 +181,16 @@ impl HookInstaller for FileSystemHookInstaller {
 /// use git_smee_core::{install_hooks, SmeeConfig};
 /// use git_smee_core::config::{HookDefinition, LifeCyclePhase};
 /// use git_smee_core::installer::FileSystemHookInstaller;
-/// use std::fs;
+/// use std::{fs, process::Command};
 /// use tempfile::tempdir;
 ///
 /// let temp_dir = tempdir().unwrap();
+/// Command::new("git")
+///     .arg("init")
+///     .current_dir(temp_dir.path())
+///     .output()
+///     .unwrap();
 /// let hooks_dir = temp_dir.path().join(".git").join("hooks");
-/// fs::create_dir_all(&hooks_dir).unwrap();
 ///
 /// let mut hooks = std::collections::HashMap::new();
 /// hooks.insert(

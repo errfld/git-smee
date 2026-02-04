@@ -19,7 +19,7 @@ struct Cli {
 enum Command {
     #[command(
         name = "install",
-        about = "Install git hooks from {.git-smee.toml} into .git/hooks"
+        about = "Install git hooks from {.git-smee.toml} into Git's effective hooks directory"
     )]
     Install,
     #[command(name = "run", about = "Run a specific git hook")]
