@@ -1,5 +1,8 @@
 use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, platform::Platform};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -27,6 +30,8 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("Failed to resolve current executable path: {0}")]
+    FailedToResolveCurrentExecutable(std::io::Error),
 }
 
 /// Behavioral definition of a hook installer.
@@ -41,6 +46,29 @@ pub trait HookInstaller {
 pub struct FileSystemHookInstaller {
     repository_root: PathBuf,
     hooks_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct HookScriptOptions {
+    pub git_smee_executable: PathBuf,
+    pub config_path: PathBuf,
+}
+
+impl HookScriptOptions {
+    pub fn new(git_smee_executable: PathBuf, config_path: PathBuf) -> Self {
+        Self {
+            git_smee_executable,
+            config_path,
+        }
+    }
+
+    fn default_for_runtime() -> Result<Self, Error> {
+        Ok(Self {
+            git_smee_executable: std::env::current_exe()
+                .map_err(Error::FailedToResolveCurrentExecutable)?,
+            config_path: PathBuf::from(DEFAULT_CONFIG_FILE_NAME),
+        })
+    }
 }
 
 impl FileSystemHookInstaller {
@@ -211,10 +239,27 @@ pub fn install_hooks<T: HookInstaller>(
     config: &SmeeConfig,
     hook_installer: &T,
 ) -> Result<(), Error> {
+    let options = HookScriptOptions::default_for_runtime()?;
+    install_hooks_with_options(config, hook_installer, &options)
+}
+
+pub fn install_hooks_with_options<T: HookInstaller>(
+    config: &SmeeConfig,
+    hook_installer: &T,
+    options: &HookScriptOptions,
+) -> Result<(), Error> {
     if config.hooks.is_empty() {
         return Err(Error::NoHooksPresent);
     }
     let platform = Platform::current();
+    let escaped_executable = match platform {
+        Platform::Unix => shell_single_quote(&options.git_smee_executable),
+        Platform::Windows => cmd_escape(&options.git_smee_executable),
+    };
+    let escaped_config_path = match platform {
+        Platform::Unix => shell_single_quote(&options.config_path),
+        Platform::Windows => cmd_escape(&options.config_path),
+    };
     config
         .hooks
         .keys()
@@ -223,6 +268,9 @@ pub fn install_hooks<T: HookInstaller>(
             let content = platform
                 .hook_script_template()
                 .replace("{hook}", &lifecycle_phase_kebap);
+            let content = content
+                .replace("{git_smee_executable}", &escaped_executable)
+                .replace("{config_path}", &escaped_config_path);
             let hook_path = hook_installer.install_hook(&lifecycle_phase_kebap, &content)?;
             platform
                 .make_executable(&hook_path)
@@ -231,6 +279,16 @@ pub fn install_hooks<T: HookInstaller>(
         })
         .collect::<Result<Vec<_>, Error>>()?;
     Ok(())
+}
+
+fn shell_single_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
+}
+
+fn cmd_escape(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('"', "\"\"")
+        .replace('%', "%%")
 }
 
 #[cfg(test)]
@@ -303,13 +361,19 @@ mod tests {
             }],
         );
         let config = SmeeConfig { hooks: hooks_map };
+        let options = HookScriptOptions::new(
+            PathBuf::from("/tmp/git-smee-bin"),
+            PathBuf::from("/tmp/custom-config.toml"),
+        );
 
         let installer = AssertingHookInstaller::new(|hook_name, hook_content| {
             assert_eq!(hook_name, "pre-commit");
-            assert!(hook_content.contains("git smee run pre-commit"));
+            assert!(hook_content.contains("run pre-commit"));
+            assert!(hook_content.contains("/tmp/git-smee-bin"));
+            assert!(hook_content.contains("/tmp/custom-config.toml"));
         });
 
-        let result = install_hooks(&config, &installer);
+        let result = install_hooks_with_options(&config, &installer, &options);
         if let Err(err) = &result {
             println!("Error installing hooks: {err:?}");
         }
@@ -338,16 +402,22 @@ mod tests {
             }],
         );
         let config = SmeeConfig { hooks: hooks_map };
+        let options = HookScriptOptions::new(
+            PathBuf::from("/tmp/git-smee-bin"),
+            PathBuf::from("/tmp/custom-config.toml"),
+        );
         let installer = AssertingHookInstaller::new(|hook_name, hook_content| match hook_name {
             "pre-commit" => {
-                assert!(hook_content.contains("git smee run pre-commit"));
+                assert!(hook_content.contains("run pre-commit"));
+                assert!(hook_content.contains("/tmp/git-smee-bin"));
             }
             "pre-push" => {
-                assert!(hook_content.contains("git smee run pre-push"));
+                assert!(hook_content.contains("run pre-push"));
+                assert!(hook_content.contains("/tmp/custom-config.toml"));
             }
             _ => panic!("Unexpected hook name: {hook_name}"),
         });
-        let result = install_hooks(&config, &installer);
+        let result = install_hooks_with_options(&config, &installer, &options);
         assert!(result.is_ok());
         assert_eq!(
             installer.number_of_installed_hooks.load(Ordering::SeqCst),
