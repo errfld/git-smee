@@ -222,7 +222,7 @@ command = "echo custom"
     let expected_executable = cargo::cargo_bin!("git-smee");
     let expected_config_path = test_repo.path.join("configs/hook-config.toml");
 
-    let mut cmd = Command::new(&expected_executable);
+    let mut cmd = Command::new(expected_executable);
     cmd.current_dir(&test_repo.path)
         .arg("install")
         .arg("--config")
