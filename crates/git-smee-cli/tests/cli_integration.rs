@@ -5,8 +5,7 @@ use assert_cmd::prelude::*;
 use assert_fs::TempDir;
 use git_smee_core::config::LifeCyclePhase;
 use git_smee_core::installer::MANAGED_FILE_MARKER;
-use predicates::str::contains;
-
+use predicates::prelude::*;
 mod common;
 
 #[test]
@@ -24,7 +23,7 @@ fn given_non_repo_dir_when_help_then_success() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(contains("Usage:"));
+        .stdout(predicate::str::contains("Usage:"));
 }
 
 #[test]
@@ -36,7 +35,7 @@ fn given_non_repo_dir_when_version_then_success() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(contains(env!("CARGO_PKG_VERSION")));
+        .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
 
 #[test]
@@ -53,7 +52,10 @@ fn given_non_repo_dir_when_repo_commands_then_not_in_git_repository_error() {
             .args(args)
             .assert()
             .failure()
-            .stderr(contains("NotInGitRepository"));
+            .stderr(
+                predicate::str::contains("Error: Not in a git repository")
+                    .and(predicate::str::contains("NotInGitRepository").not()),
+            );
     }
 }
 
@@ -67,6 +69,37 @@ fn given_git_smee_when_install_then_hooks_are_present() {
         .assert()
         .success();
     test_repo.assert_hooks_installed(vec![LifeCyclePhase::PreCommit, LifeCyclePhase::PrePush]);
+}
+
+#[test]
+fn given_invalid_hook_when_run_then_user_friendly_error() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "not-a-hook"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Unknown lifecycle phase: not-a-hook")
+                .and(predicate::str::contains("UnknownLifeCyclePhase").not()),
+        );
+}
+
+#[test]
+fn given_missing_config_when_install_then_user_friendly_error() {
+    let test_repo = common::TestRepo::default();
+    std::fs::remove_file(test_repo.config_path()).expect("Failed to remove config file");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: The specified configuration file is missing")
+                .and(predicate::str::contains("MissingFile").not()),
+        );
 }
 
 #[test]
@@ -87,8 +120,12 @@ command = "   "
         .arg("install")
         .assert()
         .failure()
-        .stderr(contains("hook_name: \"pre-commit\""))
-        .stderr(contains("entry_index: 2"));
+        .stderr(
+            predicate::str::contains(
+                "Error: Hook 'pre-commit' entry #2: command must not be empty",
+            )
+            .and(predicate::str::contains("EmptyCommand").not()),
+        );
 }
 
 #[test]
@@ -101,7 +138,12 @@ fn given_existing_config_when_init_without_force_then_it_refuses_to_overwrite() 
         .arg("init")
         .assert()
         .failure()
-        .stderr(contains("RefusingToOverwriteUnmanagedConfigFile"));
+        .stderr(
+            predicate::str::contains(
+                "Error: Refusing to overwrite existing unmanaged config file",
+            )
+            .and(predicate::str::contains("RefusingToOverwriteUnmanagedConfigFile").not()),
+        );
 
     let after = fs::read_to_string(test_repo.config_path()).unwrap();
     assert_eq!(after, original);
@@ -140,7 +182,10 @@ fn given_unmanaged_hook_when_install_without_force_then_it_fails_and_preserves_h
         .arg("install")
         .assert()
         .failure()
-        .stderr(contains("RefusingToOverwriteUnmanagedHookFile"));
+        .stderr(
+            predicate::str::contains("Error: Refusing to overwrite unmanaged hook file")
+                .and(predicate::str::contains("RefusingToOverwriteUnmanagedHookFile").not()),
+        );
 
     let after = fs::read_to_string(pre_commit).unwrap();
     assert_eq!(after, unmanaged);
