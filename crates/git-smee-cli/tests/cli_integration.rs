@@ -139,10 +139,8 @@ fn given_existing_config_when_init_without_force_then_it_refuses_to_overwrite() 
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains(
-                "Error: Refusing to overwrite existing unmanaged config file",
-            )
-            .and(predicate::str::contains("RefusingToOverwriteUnmanagedConfigFile").not()),
+            predicate::str::contains("Error: Refusing to overwrite existing unmanaged config file")
+                .and(predicate::str::contains("RefusingToOverwriteUnmanagedConfigFile").not()),
         );
 
     let after = fs::read_to_string(test_repo.config_path()).unwrap();
