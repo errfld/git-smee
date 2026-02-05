@@ -227,6 +227,8 @@ cargo test
 cargo run -p git-smee-cli -- --help
 ```
 
+GitHub Actions CI validates Linux (stable/beta/nightly) and Windows (stable) build/test compatibility.
+
 ## License
 
 MIT © 2025 Eran Riesenfeld

@@ -32,6 +32,26 @@ jobs:
       - name: Test
         run: cargo test --workspace --verbose
 
+  windows-build-and-test:
+    name: Build & test (windows, stable)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets --verbose
+
+      - name: Test
+        run: cargo test --workspace --verbose
+
   lint:
     name: Lint (fmt + clippy, stable)
     runs-on: ubuntu-latest
