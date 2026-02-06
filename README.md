@@ -159,6 +159,9 @@ git-smee supports all standard Git lifecycle hooks:
 | `post-merge` | Run after a merge |
 | `post-rewrite` | Run after commands that rewrite commits |
 | `pre-push` | Run before a push |
+| `pre-receive` | Run before refs are updated (server-side) |
+| `update` | Run once per ref update before it is applied (server-side) |
+| `post-receive` | Run after refs are updated (server-side) |
 | `reference-transaction` | Run when reference transaction state changes |
 | `push-to-checkout` | Run when a push tries to update the checked-out branch |
 | `pre-auto-gc` | Run before automatic garbage collection |
