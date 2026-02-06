@@ -45,17 +45,22 @@ impl Platform {
     }
 
     pub fn create_command(&self) -> Command {
+        let mut cmd = Command::new(self.shell_program());
+        cmd.arg(self.shell_flag());
+        cmd
+    }
+
+    pub fn shell_program(&self) -> &'static str {
         match self {
-            Platform::Windows => {
-                let mut cmd = Command::new("cmd.exe");
-                cmd.arg("/C");
-                cmd
-            }
-            Platform::Unix => {
-                let mut cmd = Command::new("bash");
-                cmd.arg("-c");
-                cmd
-            }
+            Platform::Windows => "cmd.exe",
+            Platform::Unix => "sh",
+        }
+    }
+
+    pub fn shell_flag(&self) -> &'static str {
+        match self {
+            Platform::Windows => "/C",
+            Platform::Unix => "-c",
         }
     }
 }
@@ -75,6 +80,8 @@ fn make_executable_unix(_hook_path: &Path) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+
     use super::*;
 
     #[test]
@@ -84,6 +91,24 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn windows_command_uses_cmd_exe_and_c_flag() {
+        let command = Platform::Windows.create_command();
+        let args: Vec<&OsStr> = command.get_args().collect();
+        assert_eq!(command.get_program(), OsStr::new("cmd.exe"));
+        assert_eq!(args, vec![OsStr::new("/C")]);
+        assert_eq!(Platform::Windows.shell_program(), "cmd.exe");
+    }
+
+    #[test]
+    fn unix_command_uses_sh_and_c_flag() {
+        let command = Platform::Unix.create_command();
+        let args: Vec<&OsStr> = command.get_args().collect();
+        assert_eq!(command.get_program(), OsStr::new("sh"));
+        assert_eq!(args, vec![OsStr::new("-c")]);
+        assert_eq!(Platform::Unix.shell_program(), "sh");
+    }
+
     #[cfg(unix)]
     #[test]
     fn unix_make_executable_adds_execute_permissions() {
@@ -91,7 +116,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let hook_path = temp_dir.path().join("pre-commit");
-        fs::write(&hook_path, "#!/usr/bin/env bash\necho test\n").unwrap();
+        fs::write(&hook_path, "#!/usr/bin/env sh\necho test\n").unwrap();
         fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o640)).unwrap();
 
         Platform::Unix.make_executable(&hook_path).unwrap();

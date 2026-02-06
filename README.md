@@ -11,7 +11,7 @@ Instead of copying hook scripts around or relying on heavy external tooling, git
 ## Why git-smee?
 
 - **Version-controlled**: Define hooks once in `.git-smee.toml`, commit it, share it.
-- **Cross-platform minded**: Designed to work on Unix and Windows (Git Bash) via a clear platform abstraction.
+- **Cross-platform minded**: Designed to work on Unix (POSIX `sh`) and Windows (Git Bash) via a clear platform abstraction.
 - **Small and focused**: Single-purpose binary, no plugin ecosystem or extra runtime.
 
 ## Installation

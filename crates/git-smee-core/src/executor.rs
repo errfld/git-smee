@@ -19,9 +19,12 @@ pub enum Error {
     NoHooksConfigured(LifeCyclePhase),
     #[error("No command defined")]
     NoCommandDefined,
-    #[error("Failed to spawn hook command '{command}': {source}")]
+    #[error(
+        "Failed to spawn hook command '{command}' via shell '{shell}': {source}. Ensure '{shell}' is available in PATH."
+    )]
     CommandSpawnFailed {
         command: String,
+        shell: String,
         source: std::io::Error,
     },
 }
@@ -54,6 +57,7 @@ fn execute_hook_with_runner<R: CommandRunner>(
 
 trait CommandRunner: Sync {
     fn run(&self, command: &str) -> Result<Option<i32>, std::io::Error>;
+    fn shell_name(&self) -> &'static str;
 }
 
 struct PlatformCommandRunner<'a> {
@@ -67,6 +71,10 @@ impl CommandRunner for PlatformCommandRunner<'_> {
             .arg(command)
             .status()
             .map(|status| status.code())
+    }
+
+    fn shell_name(&self) -> &'static str {
+        self.platform.shell_program()
     }
 }
 
@@ -102,6 +110,7 @@ fn execute_command(command: &str, runner: &impl CommandRunner) -> Result<(), Err
         .run(command)
         .map_err(|source| Error::CommandSpawnFailed {
             command: redact_command(command),
+            shell: runner.shell_name().to_string(),
             source,
         })?;
     match exit_code {
@@ -139,8 +148,6 @@ mod tests {
         io,
         sync::Mutex,
     };
-
-    use assert2::assert;
 
     use crate::config::HookDefinition;
 
@@ -204,6 +211,10 @@ mod tests {
                 PlannedResult::SpawnError(kind) => Err(io::Error::new(kind, "spawn failed")),
             }
         }
+
+        fn shell_name(&self) -> &'static str {
+            "test-shell"
+        }
     }
 
     #[test]
@@ -264,8 +275,13 @@ mod tests {
         let result = execute_command("deploy --token super-secret-value", &runner);
 
         match result {
-            Err(Error::CommandSpawnFailed { command, source }) => {
+            Err(Error::CommandSpawnFailed {
+                command,
+                shell,
+                source,
+            }) => {
                 assert_eq!(command, "deploy <args redacted>");
+                assert_eq!(shell, "test-shell");
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             _ => panic!("expected CommandSpawnFailed"),
@@ -281,10 +297,29 @@ mod tests {
         let result = execute_command("TOKEN=super-secret API_KEY=123 deploy --arg value", &runner);
 
         match result {
-            Err(Error::CommandSpawnFailed { command, .. }) => {
+            Err(Error::CommandSpawnFailed { command, shell, .. }) => {
                 assert_eq!(command, "deploy <args redacted>");
+                assert_eq!(shell, "test-shell");
                 assert!(!command.contains("super-secret"));
                 assert!(!command.contains("API_KEY"));
+            }
+            _ => panic!("expected CommandSpawnFailed"),
+        }
+    }
+
+    #[test]
+    fn given_spawn_error_when_executing_then_error_message_includes_shell_hint() {
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
+            io::ErrorKind::NotFound,
+        )]);
+
+        let result = execute_command("deploy --token super-secret-value", &runner);
+
+        match result {
+            Err(err @ Error::CommandSpawnFailed { .. }) => {
+                let message = err.to_string();
+                assert!(message.contains("shell 'test-shell'"));
+                assert!(message.contains("available in PATH"));
             }
             _ => panic!("expected CommandSpawnFailed"),
         }
