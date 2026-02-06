@@ -349,6 +349,28 @@ command = "echo from-env-config"
 }
 
 #[test]
+fn given_failing_hook_when_running_then_cli_surfaces_non_zero_exit_code() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config(
+        r#"
+[[pre-commit]]
+command = "exit 1"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("run")
+        .arg("pre-commit")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Hook execution failed with exit code")
+                .and(predicate::str::contains("ExecutionFailed").not()),
+        );
+}
+
+#[test]
 fn given_custom_config_path_when_installing_then_hook_script_contains_executable_and_config_path() {
     let test_repo = common::TestRepo::default();
     let custom_config = test_repo.write_config_at(
