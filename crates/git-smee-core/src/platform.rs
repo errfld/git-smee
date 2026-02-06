@@ -52,10 +52,17 @@ impl Platform {
                 cmd
             }
             Platform::Unix => {
-                let mut cmd = Command::new("bash");
+                let mut cmd = Command::new("sh");
                 cmd.arg("-c");
                 cmd
             }
+        }
+    }
+
+    pub fn shell_display(&self) -> &'static str {
+        match self {
+            Platform::Windows => "cmd.exe /C",
+            Platform::Unix => "sh -c",
         }
     }
 }
@@ -91,7 +98,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let hook_path = temp_dir.path().join("pre-commit");
-        fs::write(&hook_path, "#!/usr/bin/env bash\necho test\n").unwrap();
+        fs::write(&hook_path, "#!/usr/bin/env sh\necho test\n").unwrap();
         fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o640)).unwrap();
 
         Platform::Unix.make_executable(&hook_path).unwrap();
@@ -106,5 +113,31 @@ mod tests {
         let path = Path::new("does-not-exist-on-purpose");
         let result = Platform::Unix.make_executable(path);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn windows_create_command_uses_cmd_exe_with_c_flag() {
+        let cmd = Platform::Windows.create_command();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(cmd.get_program().to_string_lossy(), "cmd.exe");
+        assert_eq!(args, vec!["/C"]);
+        assert_eq!(Platform::Windows.shell_display(), "cmd.exe /C");
+    }
+
+    #[test]
+    fn unix_create_command_uses_portable_sh_with_c_flag() {
+        let cmd = Platform::Unix.create_command();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(cmd.get_program().to_string_lossy(), "sh");
+        assert_eq!(args, vec!["-c"]);
+        assert_eq!(Platform::Unix.shell_display(), "sh -c");
     }
 }

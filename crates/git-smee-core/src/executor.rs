@@ -19,9 +19,10 @@ pub enum Error {
     NoHooksConfigured(LifeCyclePhase),
     #[error("No command defined")]
     NoCommandDefined,
-    #[error("Failed to spawn hook command '{command}': {source}")]
+    #[error("Failed to spawn hook command '{command}' via '{shell}': {source}")]
     CommandSpawnFailed {
         command: String,
+        shell: String,
         source: std::io::Error,
     },
 }
@@ -54,6 +55,7 @@ fn execute_hook_with_runner<R: CommandRunner>(
 
 trait CommandRunner: Sync {
     fn run(&self, command: &str) -> Result<Option<i32>, std::io::Error>;
+    fn shell_display(&self) -> &'static str;
 }
 
 struct PlatformCommandRunner<'a> {
@@ -67,6 +69,10 @@ impl CommandRunner for PlatformCommandRunner<'_> {
             .arg(command)
             .status()
             .map(|status| status.code())
+    }
+
+    fn shell_display(&self) -> &'static str {
+        self.platform.shell_display()
     }
 }
 
@@ -102,6 +108,7 @@ fn execute_command(command: &str, runner: &impl CommandRunner) -> Result<(), Err
         .run(command)
         .map_err(|source| Error::CommandSpawnFailed {
             command: redact_command(command),
+            shell: runner.shell_display().to_string(),
             source,
         })?;
     match exit_code {
@@ -160,6 +167,7 @@ mod tests {
 
     struct FakeRunner {
         state: Mutex<FakeRunnerState>,
+        shell_display: &'static str,
     }
 
     impl FakeRunner {
@@ -169,6 +177,7 @@ mod tests {
                     default_outcomes: outcomes.into(),
                     ..Default::default()
                 }),
+                shell_display: "test-shell -c",
             }
         }
 
@@ -181,6 +190,7 @@ mod tests {
                         .collect(),
                     ..Default::default()
                 }),
+                shell_display: "test-shell -c",
             }
         }
 
@@ -203,6 +213,10 @@ mod tests {
                 PlannedResult::Exit(code) => Ok(code),
                 PlannedResult::SpawnError(kind) => Err(io::Error::new(kind, "spawn failed")),
             }
+        }
+
+        fn shell_display(&self) -> &'static str {
+            self.shell_display
         }
     }
 
@@ -264,8 +278,13 @@ mod tests {
         let result = execute_command("deploy --token super-secret-value", &runner);
 
         match result {
-            Err(Error::CommandSpawnFailed { command, source }) => {
+            Err(Error::CommandSpawnFailed {
+                command,
+                shell,
+                source,
+            }) => {
                 assert_eq!(command, "deploy <args redacted>");
+                assert_eq!(shell, "test-shell -c");
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             _ => panic!("expected CommandSpawnFailed"),
@@ -281,8 +300,9 @@ mod tests {
         let result = execute_command("TOKEN=super-secret API_KEY=123 deploy --arg value", &runner);
 
         match result {
-            Err(Error::CommandSpawnFailed { command, .. }) => {
+            Err(Error::CommandSpawnFailed { command, shell, .. }) => {
                 assert_eq!(command, "deploy <args redacted>");
+                assert_eq!(shell, "test-shell -c");
                 assert!(!command.contains("super-secret"));
                 assert!(!command.contains("API_KEY"));
             }

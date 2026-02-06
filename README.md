@@ -12,6 +12,7 @@ Instead of copying hook scripts around or relying on heavy external tooling, git
 
 - **Version-controlled**: Define hooks once in `.git-smee.toml`, commit it, share it.
 - **Cross-platform minded**: Designed to work on Unix and Windows (Git Bash) via a clear platform abstraction.
+- **Portable Unix execution**: Hook commands run through POSIX `sh -c` on Unix-like systems (not Bash-specific).
 - **Small and focused**: Single-purpose binary, no plugin ecosystem or extra runtime.
 
 ## Installation
