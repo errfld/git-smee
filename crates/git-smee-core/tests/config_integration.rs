@@ -159,3 +159,34 @@ unexpected = "value"
         _ => panic!("expected parse error for unknown hook definition fields"),
     }
 }
+
+#[test]
+fn given_server_side_hooks_when_reading_then_succeed() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_path = temp_dir.path().join(".git-smee.toml");
+    let mut file = fs::File::create(&config_path).expect("failed to create config fixture");
+    writeln!(
+        file,
+        r#"
+[[pre-receive]]
+command = "echo pre-receive"
+
+[[update]]
+command = "echo update"
+
+[[proc-receive]]
+command = "echo proc-receive"
+
+[[post-receive]]
+command = "echo post-receive"
+"#
+    )
+    .expect("failed to write config fixture");
+
+    let config = SmeeConfig::from_toml(&config_path).expect("expected config to parse");
+
+    assert!(config.hooks.contains_key(&LifeCyclePhase::PreReceive));
+    assert!(config.hooks.contains_key(&LifeCyclePhase::Update));
+    assert!(config.hooks.contains_key(&LifeCyclePhase::ProcReceive));
+    assert!(config.hooks.contains_key(&LifeCyclePhase::PostReceive));
+}
