@@ -44,7 +44,14 @@ enum Command {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let config_path = resolve_config_path(cli.config);
 
@@ -66,7 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Running hook: {hook}");
             let config = read_config_file(&config_path)?;
             let phase = config::LifeCyclePhase::from_str(&hook)?;
-            executor::execute_hook(&config, phase).map_err(Box::from)
+            executor::execute_hook(&config, phase)?;
+            Ok(())
         }
         Command::Initialize { force } => {
             repository::ensure_in_repo_root()?;
