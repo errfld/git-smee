@@ -25,6 +25,33 @@ fn given_simple_toml_when_reading_then_succeed() {
 }
 
 #[test]
+fn given_server_side_hooks_when_reading_then_succeed() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_path = temp_dir.path().join(".git-smee.toml");
+    let mut file = fs::File::create(&config_path).expect("failed to create config fixture");
+    writeln!(
+        file,
+        r#"
+[[pre-receive]]
+command = "echo pre-receive"
+
+[[update]]
+command = "echo update"
+
+[[post-receive]]
+command = "echo post-receive"
+"#
+    )
+    .expect("failed to write config fixture");
+
+    let config = SmeeConfig::from_toml(&config_path).expect("Should load successfully");
+
+    assert_eq!(config.hooks[&LifeCyclePhase::PreReceive].len(), 1);
+    assert_eq!(config.hooks[&LifeCyclePhase::Update].len(), 1);
+    assert_eq!(config.hooks[&LifeCyclePhase::PostReceive].len(), 1);
+}
+
+#[test]
 fn given_invalid_path_when_reading_then_error() {
     let path = PathBuf::from("tests/fixtures/non_existent_config.toml");
     let result = SmeeConfig::from_toml(&path);
