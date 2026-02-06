@@ -619,4 +619,83 @@ mod tests {
     fn given_unsupported_prefix_when_adding_managed_header_then_it_panics() {
         let _ = with_managed_header_with_prefix("echo test", "//");
     }
+
+    #[test]
+    fn shell_single_quote_wraps_and_escapes_single_quotes() {
+        let path = Path::new("/tmp/it's 100% ready/git-smee");
+
+        assert_eq!(
+            shell_single_quote(path),
+            "'/tmp/it'\"'\"'s 100% ready/git-smee'"
+        );
+    }
+
+    #[test]
+    fn cmd_escape_escapes_percent_and_double_quotes() {
+        let path = Path::new(r#"C:\Program Files\100%"quoted"\git-smee.exe"#);
+
+        assert_eq!(
+            cmd_escape(path),
+            r#"C:\Program Files\100%%""quoted""\git-smee.exe"#
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn given_special_paths_when_installing_hooks_then_unix_hook_contains_escaped_values() {
+        let mut hooks_map = std::collections::HashMap::new();
+        hooks_map.insert(
+            crate::config::LifeCyclePhase::PreCommit,
+            vec![crate::config::HookDefinition {
+                command: "echo Pre-commit hook".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks: hooks_map };
+        let options = HookScriptOptions::new(
+            PathBuf::from("/tmp/it's 100% ready/git-smee"),
+            PathBuf::from("/tmp/configs/it's 100% ready.toml"),
+        );
+        let installer = AssertingHookInstaller::new(|hook_name, hook_content| {
+            assert_eq!(hook_name, "pre-commit");
+            assert!(hook_content.contains("GIT_SMEE_BIN='/tmp/it'\"'\"'s 100% ready/git-smee'"));
+            assert!(
+                hook_content.contains("GIT_SMEE_CONFIG='/tmp/configs/it'\"'\"'s 100% ready.toml'")
+            );
+        });
+
+        let result = install_hooks_with_options(&config, &installer, &options);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn given_special_paths_when_installing_hooks_then_windows_hook_contains_escaped_values() {
+        let mut hooks_map = std::collections::HashMap::new();
+        hooks_map.insert(
+            crate::config::LifeCyclePhase::PreCommit,
+            vec![crate::config::HookDefinition {
+                command: "echo Pre-commit hook".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks: hooks_map };
+        let options = HookScriptOptions::new(
+            PathBuf::from(r#"C:\Program Files\100%"quoted"\git-smee.exe"#),
+            PathBuf::from(r#"C:\repo\configs\it's 100% "ready".toml"#),
+        );
+        let installer =
+            AssertingHookInstaller::new(|hook_name, hook_content| {
+                assert_eq!(hook_name, "pre-commit");
+                assert!(hook_content.contains(
+                    r#"set "GIT_SMEE_BIN=C:\Program Files\100%%""quoted""\git-smee.exe""#
+                ));
+                assert!(hook_content.contains(
+                    r#"set "GIT_SMEE_CONFIG=C:\repo\configs\it's 100%% ""ready"".toml""#
+                ));
+            });
+
+        let result = install_hooks_with_options(&config, &installer, &options);
+        assert!(result.is_ok());
+    }
 }
