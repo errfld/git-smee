@@ -399,6 +399,44 @@ command = "echo custom"
     assert!(hook_content.contains(expected_config_path.to_string_lossy().as_ref()));
 }
 
+#[test]
+fn given_special_character_config_path_when_installing_then_hook_script_escapes_path() {
+    let test_repo = common::TestRepo::default();
+    let custom_config = test_repo.write_config_at(
+        "configs/it's 100% ready/hook config.toml",
+        r#"
+[[pre-commit]]
+command = "echo custom"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&custom_config)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    {
+        let expected = custom_config.to_string_lossy().replace('\'', "'\"'\"'");
+        assert!(hook_content.contains(&expected));
+    }
+
+    #[cfg(windows)]
+    {
+        let expected = custom_config
+            .to_string_lossy()
+            .replace('"', "\"\"")
+            .replace('%', "%%");
+        assert!(hook_content.contains(&expected));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn given_minimal_path_when_running_installed_hook_then_hook_uses_absolute_git_smee_path() {
