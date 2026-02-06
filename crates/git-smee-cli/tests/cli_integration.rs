@@ -422,10 +422,19 @@ command = "echo custom"
         fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
 
     #[cfg(unix)]
-    assert!(hook_content.contains("it'\"'\"'s 100% ready/hook config.toml"));
+    {
+        let expected = custom_config.to_string_lossy().replace('\'', "'\"'\"'");
+        assert!(hook_content.contains(&expected));
+    }
 
     #[cfg(windows)]
-    assert!(hook_content.contains("it's 100%% ready\\hook config.toml"));
+    {
+        let expected = custom_config
+            .to_string_lossy()
+            .replace('"', "\"\"")
+            .replace('%', "%%");
+        assert!(hook_content.contains(&expected));
+    }
 }
 
 #[cfg(unix)]
