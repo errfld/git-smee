@@ -1,103 +1,83 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+This project uses **GitHub Issues + GitHub Projects** for task tracking. Use the GitHub CLI (`gh`) as the default interface.
 
 ## Quick Reference
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+# Find work
+gh issue list --state open --limit 100
+
+# Inspect an issue
+gh issue view <number>
+
+# Claim work
+gh issue edit <number> --add-assignee @me --add-label status:in_progress
+
+# Create follow-up work
+gh issue create --title "..." --body-file <file> --label type:task --label status:todo
+
+# Complete work
+gh issue close <number> --comment "Completed in <commit-or-pr>"
+```
+
+## Dependencies and Hierarchy
+
+Use native GitHub relationships (not markdown-only links):
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+# Add dependency: issue <blocked> is blocked by issue <blocker>
+BLOCKER_NODE_ID=$(gh issue view <blocker> --json id --jq .id)
+gh api -X POST "repos/$REPO/issues/<blocked>/dependencies/blocked_by" -f issue_id="$BLOCKER_NODE_ID"
+
+# Add hierarchy: issue <child> becomes a sub-issue of issue <parent>
+CHILD_NODE_ID=$(gh issue view <child> --json id --jq .id)
+gh api -X POST "repos/$REPO/issues/<parent>/sub_issues" -f sub_issue_id="$CHILD_NODE_ID"
 ```
 
 ## Landing the Plane (Session Completion)
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+**When ending a work session**, complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+1. **File issues for remaining work** - create follow-up GitHub issues for any unfinished work.
+2. **Run quality gates** (if code changed) - tests, linters, builds.
+3. **Update issue state** - move active issue(s) to correct status labels and close completed issue(s).
+4. **Push to remote** - mandatory:
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+5. **Clean up** - clear stashes, prune stale branches.
+6. **Verify** - all intended changes are committed and pushed.
+7. **Hand off** - leave clear context in issue comments.
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+## Workflow Pattern
 
+1. **Start**: Find unblocked work in GitHub Project views or issue search.
+2. **Claim**: Assign yourself and add `status:in_progress`.
+3. **Work**: Implement the task and keep issue comments updated.
+4. **Complete**: Close the issue with commit/PR reference.
+5. **Sync**: Ensure branch is rebased and pushed.
 
-<!-- bv-agent-instructions-v1 -->
+## Key Conventions
 
----
+- **Dependencies**: Use issue dependency APIs (`blocked by` / `blocking`) for scheduling truth.
+- **Hierarchy**: Use parent/sub-issue relationships for epics and decomposed work.
+- **Priority**: Use labels `priority:P0` ... `priority:P4`.
+- **Types**: Use labels `type:task`, `type:bug`, `type:feature`, `type:docs`, `type:question`.
+- **Status**: Use labels `status:todo`, `status:in_progress`, `status:blocked`, `status:done`.
+- **Agent memory**: Store durable decisions/context in issues labeled `memory` and/or `decision`; keep one memory thread per domain and append via sub-issues.
 
-## Beads Workflow Integration
+## TUI Recommendation
 
-This project uses [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) for issue tracking. Issues are stored in `.beads/` and tracked in git.
-
-### Essential Commands
-
-```bash
-# View issues (launches TUI - avoid in automated sessions)
-bv
-
-# CLI commands for agents (use these instead)
-bd ready              # Show issues ready to work (no blockers)
-bd list --status=open # All open issues
-bd show <id>          # Full issue details with dependencies
-bd create --title="..." --type=task --priority=2
-bd update <id> --status=in_progress
-bd close <id> --reason="Completed"
-bd close <id1> <id2>  # Close multiple issues at once
-bd sync               # Commit and push changes
-```
-
-### Workflow Pattern
-
-1. **Start**: Run `bd ready` to find actionable work
-2. **Claim**: Use `bd update <id> --status=in_progress`
-3. **Work**: Implement the task
-4. **Complete**: Use `bd close <id>`
-5. **Sync**: Always run `bd sync` at session end
-
-### Key Concepts
-
-- **Dependencies**: Issues can block other issues. `bd ready` shows only unblocked work.
-- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers, not words)
-- **Types**: task, bug, feature, epic, question, docs
-- **Blocking**: `bd dep add <issue> <depends-on>` to add dependencies
-
-### Session Protocol
-
-**Before ending any session, run this checklist:**
+Use **gh-dash** for keyboard-driven issue/PR triage and project visibility:
 
 ```bash
-git status              # Check what changed
-git add <files>         # Stage code changes
-bd sync                 # Commit beads changes
-git commit -m "..."     # Commit code
-bd sync                 # Commit any new beads changes
-git push                # Push to remote
+gh extension install dlvhdr/gh-dash
+gh dash
 ```
 
-### Best Practices
-
-- Check `bd ready` at session start to find available work
-- Update status as you work (in_progress → closed)
-- Create new issues with `bd create` when you discover tasks
-- Use descriptive titles and set appropriate priority/type
-- Always `bd sync` before ending session
-
-<!-- end-bv-agent-instructions -->
+Prefer `gh` / `gh api` for deterministic write operations by agents.
