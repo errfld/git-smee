@@ -1,0 +1,61 @@
+name: Task
+description: Track implementation work with clear scope and acceptance criteria.
+title: "task: "
+labels:
+  - type:task
+  - status:todo
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What outcome should this task produce?
+      placeholder: Describe the intended result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in scope and out of scope?
+      placeholder: |
+        In scope:
+        - ...
+
+        Out of scope:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Concrete checks for done.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Blocking issue numbers, comma-separated (for example, #12, #19).
+      placeholder: "#12, #19"
+
+  - type: input
+    id: parent_issue
+    attributes:
+      label: Parent issue
+      description: If this belongs under an epic, include parent issue number.
+      placeholder: "#35"
+
+  - type: textarea
+    id: links
+    attributes:
+      label: Links and references
+      description: Specs, PRs, commits, or docs.
+      placeholder: Add relevant links.

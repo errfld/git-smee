@@ -1,0 +1,72 @@
+name: Memory
+description: Persist durable agent context so future work can reuse it.
+title: "memory: "
+labels:
+  - memory
+  - status:todo
+body:
+  - type: input
+    id: domain
+    attributes:
+      label: Domain
+      description: Memory area (for example, release process, CI, hooks).
+      placeholder: "release process"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Where this memory came from and why it matters.
+      placeholder: Explain origin and relevance.
+    validations:
+      required: true
+
+  - type: textarea
+    id: memory_statement
+    attributes:
+      label: Memory statement
+      description: The durable fact, rule, or pattern to retain.
+      placeholder: State the memory clearly and unambiguously.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: confidence
+    attributes:
+      label: Confidence
+      options:
+        - high
+        - medium
+        - low
+      default: 1
+    validations:
+      required: true
+
+  - type: textarea
+    id: links
+    attributes:
+      label: Links and evidence
+      description: Supporting issues, PRs, commits, docs, or logs.
+      placeholder: Add traceable references.
+    validations:
+      required: true
+
+  - type: textarea
+    id: next_action
+    attributes:
+      label: Next action
+      description: What should happen next because of this memory?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: input
+    id: supersedes
+    attributes:
+      label: Supersedes
+      description: Older memory issue replaced by this one.
+      placeholder: "#456"
