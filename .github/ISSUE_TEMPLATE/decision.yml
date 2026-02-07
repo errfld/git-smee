@@ -1,0 +1,72 @@
+name: Decision
+description: Record an architecture or process decision with rationale.
+title: "decision: "
+labels:
+  - decision
+  - status:todo
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What problem or constraint requires a decision?
+      placeholder: Describe the context and triggering factors.
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision
+      description: What was decided?
+      placeholder: State the decision clearly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequences
+      description: Expected tradeoffs, risks, and operational impact.
+      placeholder: |
+        Positive:
+        - ...
+
+        Negative:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What options were considered and why rejected?
+      placeholder: List alternatives and rationale.
+
+  - type: textarea
+    id: links
+    attributes:
+      label: Links and references
+      description: Related issues, PRs, docs, incidents, or discussions.
+      placeholder: Add issue and PR links.
+    validations:
+      required: true
+
+  - type: textarea
+    id: next_action
+    attributes:
+      label: Next action
+      description: Follow-up actions required to implement or communicate this decision.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: input
+    id: superseded_by
+    attributes:
+      label: Superseded by
+      description: If replaced by a newer decision, link it.
+      placeholder: "#123"
