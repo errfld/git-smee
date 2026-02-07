@@ -38,8 +38,8 @@ Use labels as canonical metadata:
 - Apply dependency edges using mapped IDs.
 
 3. Cutover
-- Set Beads read-only for contributors/agents.
-- Remove Beads commands from docs and scripts.
+- Archive Beads data under `archive/beads/` and stop using Beads tooling for new work.
+- Remove Beads commands from active docs and scripts.
 - Route all new tasks to GitHub Issues.
 
 4. Stabilization
@@ -79,7 +79,7 @@ printf '{"sub_issue_id": %s}\n' "$C_ID" \
 
 ## Migration Script
 
-Use `scripts/beads_to_github.py` to migrate issues from `.beads/issues.jsonl`.
+Use `scripts/beads_to_github.py` to migrate issues from `archive/beads/issues.jsonl`.
 
 ```bash
 # Dry-run

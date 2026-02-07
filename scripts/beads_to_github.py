@@ -434,7 +434,12 @@ def apply_links(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--issues", type=Path, default=Path(".beads/issues.jsonl"), help="Path to Beads issues JSONL")
+    parser.add_argument(
+        "--issues",
+        type=Path,
+        default=Path("archive/beads/issues.jsonl"),
+        help="Path to Beads issues JSONL snapshot",
+    )
     parser.add_argument(
         "--mapping",
         type=Path,
