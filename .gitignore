@@ -22,9 +22,6 @@ target
 
 Git Smee.md
 
-# bv (beads viewer) local config and caches
-.bv/
-
 # Beads -> GitHub migration state
 .migration/
 
