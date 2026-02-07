@@ -49,9 +49,9 @@ Use labels as canonical metadata:
 
 ## Command Mapping
 
-- `bd ready` -> GitHub project "Ready" view or `gh issue list --state open --search "label:status:todo -label:status:blocked"`
+- `bd ready` -> GitHub project "Ready" view or `gh issue list --state open --search 'label:"status:todo" -label:"status:blocked"'`
 - `bd show <id>` -> `gh issue view <number>`
-- `bd update <id> --status in_progress` -> `gh issue edit <number> --add-label status:in_progress --remove-label status:todo`
+- `bd update <id> --status in_progress` -> `gh issue edit <number> --add-label "status:in_progress" --remove-label "status:todo"`
 - `bd close <id>` -> `gh issue close <number>`
 - `bd dep add <a> <b>` -> dependency API (`a` blocked by `b`)
 
@@ -63,12 +63,18 @@ REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 # a blocked by b
 B_ID=$(gh api "repos/$REPO/issues/<b>" --jq .id)
 printf '{"issue_id": %s}\n' "$B_ID" \
-  | gh api -X POST "repos/$REPO/issues/<a>/dependencies/blocked_by" --input -
+  | gh api -X POST "repos/$REPO/issues/<a>/dependencies/blocked_by" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      --input -
 
 # c is child of p
 C_ID=$(gh api "repos/$REPO/issues/<c>" --jq .id)
 printf '{"sub_issue_id": %s}\n' "$C_ID" \
-  | gh api -X POST "repos/$REPO/issues/<p>/sub_issues" --input -
+  | gh api -X POST "repos/$REPO/issues/<p>/sub_issues" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      --input -
 ```
 
 ## TUI
