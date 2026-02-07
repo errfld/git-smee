@@ -77,6 +77,39 @@ printf '{"sub_issue_id": %s}\n' "$C_ID" \
       --input -
 ```
 
+## Migration Script
+
+Use `scripts/beads_to_github.py` to migrate issues from `.beads/issues.jsonl`.
+
+```bash
+# Dry-run
+python3 scripts/beads_to_github.py --open-only
+
+# Apply migration writes
+python3 scripts/beads_to_github.py --apply
+```
+
+The script persists an id map in `.migration/beads_to_github_mapping.json` so reruns are idempotent.
+
+## Optional Links File
+
+If you have dependency and hierarchy relationships, pass `--links <file>` with this shape:
+
+```json
+{
+  "dependencies": [
+    { "blocked": "git-smee-39", "blocker": "git-smee-38" },
+    { "blocked": "#120", "blocker": "#118" }
+  ],
+  "hierarchy": [
+    { "parent": "git-smee-35", "child": "git-smee-37" },
+    { "parent": "#110", "child": "#111" }
+  ]
+}
+```
+
+`blocked`, `blocker`, `parent`, and `child` values can be Beads IDs (resolved via mapping) or GitHub issue numbers.
+
 ## TUI
 
 Recommended TUI: `gh-dash`
