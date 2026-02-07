@@ -27,3 +27,6 @@ Git Smee.md
 
 # Beads -> GitHub migration state
 .migration/
+
+# Python cache
+__pycache__/
