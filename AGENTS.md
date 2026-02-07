@@ -29,12 +29,14 @@ Use native GitHub relationships (not markdown-only links):
 REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 
 # Add dependency: issue <blocked> is blocked by issue <blocker>
-BLOCKER_NODE_ID=$(gh issue view <blocker> --json id --jq .id)
-gh api -X POST "repos/$REPO/issues/<blocked>/dependencies/blocked_by" -f issue_id="$BLOCKER_NODE_ID"
+BLOCKER_ID=$(gh api "repos/$REPO/issues/<blocker>" --jq .id)
+printf '{"issue_id": %s}\n' "$BLOCKER_ID" \
+  | gh api -X POST "repos/$REPO/issues/<blocked>/dependencies/blocked_by" --input -
 
 # Add hierarchy: issue <child> becomes a sub-issue of issue <parent>
-CHILD_NODE_ID=$(gh issue view <child> --json id --jq .id)
-gh api -X POST "repos/$REPO/issues/<parent>/sub_issues" -f sub_issue_id="$CHILD_NODE_ID"
+CHILD_ID=$(gh api "repos/$REPO/issues/<child>" --jq .id)
+printf '{"sub_issue_id": %s}\n' "$CHILD_ID" \
+  | gh api -X POST "repos/$REPO/issues/<parent>/sub_issues" --input -
 ```
 
 ## Landing the Plane (Session Completion)

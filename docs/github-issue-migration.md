@@ -61,12 +61,14 @@ Use labels as canonical metadata:
 REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 
 # a blocked by b
-B_NODE=$(gh issue view <b> --json id --jq .id)
-gh api -X POST "repos/$REPO/issues/<a>/dependencies/blocked_by" -f issue_id="$B_NODE"
+B_ID=$(gh api "repos/$REPO/issues/<b>" --jq .id)
+printf '{"issue_id": %s}\n' "$B_ID" \
+  | gh api -X POST "repos/$REPO/issues/<a>/dependencies/blocked_by" --input -
 
 # c is child of p
-C_NODE=$(gh issue view <c> --json id --jq .id)
-gh api -X POST "repos/$REPO/issues/<p>/sub_issues" -f sub_issue_id="$C_NODE"
+C_ID=$(gh api "repos/$REPO/issues/<c>" --jq .id)
+printf '{"sub_issue_id": %s}\n' "$C_ID" \
+  | gh api -X POST "repos/$REPO/issues/<p>/sub_issues" --input -
 ```
 
 ## TUI
