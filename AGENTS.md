@@ -62,6 +62,7 @@ printf '{"sub_issue_id": %s}\n' "$CHILD_ID" \
 1. **Start**: Find unblocked work in GitHub Project views or issue search.
 2. **Claim**: Assign yourself and add `status:in_progress`.
 3. **Work**: Implement the task and keep issue comments updated.
+   For detailed step-by-step implementation instructions, see **Required Implementation Workflow** below.
 4. **Complete**: Close the issue with commit/PR reference.
 5. **Sync**: Ensure branch is rebased and pushed.
 
@@ -71,7 +72,7 @@ Follow this workflow for every implementation task:
 
 1. Determine the best issue to start with (priority, unblocking impact, and overall sequencing), then pick an **open GitHub issue**.
 2. Mark the issue as `status:in_progress` and assign yourself.
-3. Create a worktree and branch named `gh-<NUMBER>/<short-description>`.
+3. Create a worktree and branch named `gh-<NUMBER>/<short-description>` (e.g., `gh-48/agents-workflow-github-only`).
 4. Start implementation.
    - 4.1 Note operational/process improvements and implementation guidance in `AGENTS.md`.
    - 4.2 Create new GitHub issues for discovered improvements/reworks with complete context for someone with no prior repository knowledge.
@@ -79,7 +80,7 @@ Follow this workflow for every implementation task:
    - 4.4 Review your own changes before publishing.
 5. Push the branch and open a pull request.
 6. Wait for review and address PR comments.
-7. User merges the PR; then close the linked GitHub issue.
+7. Once the PR is merged by a maintainer or authorized reviewer, close the linked GitHub issue.
 
 ## Key Conventions
 
