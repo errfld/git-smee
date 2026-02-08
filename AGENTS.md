@@ -22,6 +22,24 @@ gh issue create --title "..." --body-file <file> --label type:task --label statu
 gh issue close <number> --comment "Completed in <commit-or-pr>"
 ```
 
+## Comment Formatting (GitHub CLI)
+
+Use real newlines for multi-line comments. Do **not** put `\n` inside normal quoted strings (for example, `"line1\nline2"`), because the shell passes it literally and GitHub renders `\n` as text. This applies to both `gh issue comment` and `gh pr comment`.
+
+```bash
+# Preferred: write multiline issue comments via stdin
+gh issue comment <number> --body-file - <<'EOF'
+Addressed all requested review updates in commit <sha>:
+- item 1
+- item 2
+
+Both unresolved review threads are now marked resolved.
+EOF
+
+# Then close separately (or keep one-line close comments only)
+gh issue close <number> --comment "Completed in <commit-or-pr>"
+```
+
 ## Dependencies and Hierarchy
 
 Use native GitHub relationships (not markdown-only links):
