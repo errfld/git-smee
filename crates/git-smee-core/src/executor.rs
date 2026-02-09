@@ -119,24 +119,82 @@ fn execute_command(command: &str, runner: &impl CommandRunner) -> Result<(), Err
 }
 
 fn redact_command(command: &str) -> String {
-    let mut tokens = command.split_whitespace();
-    let executable = tokens
-        .by_ref()
-        .find(|token| !is_inline_env_assignment(token))
-        .unwrap_or("<redacted>");
-    let mut redacted = executable.to_string();
+    let tokens = tokenize_command(command);
+    let executable_index = tokens
+        .iter()
+        .position(|token| !is_inline_env_assignment(token));
+    let mut redacted = executable_index
+        .and_then(|index| tokens.get(index))
+        .cloned()
+        .unwrap_or_else(|| "<redacted>".to_string());
     if redacted.len() > 80 {
         redacted.truncate(77);
         redacted.push_str("...");
     }
-    if tokens.next().is_some() {
+    if let Some(index) = executable_index && tokens.len() > index + 1 {
         redacted.push_str(" <args redacted>");
     }
     redacted
 }
 
 fn is_inline_env_assignment(token: &str) -> bool {
-    token.contains('=') && !token.starts_with('-') && !token.contains('/') && !token.contains('\\')
+    let Some((key, _)) = token.split_once('=') else {
+        return false;
+    };
+    is_valid_env_var_name(key)
+}
+
+fn is_valid_env_var_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !matches!(first, 'A'..='Z' | 'a'..='z' | '_') {
+        return false;
+    }
+    chars.all(|ch| matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'))
+}
+
+fn tokenize_command(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quotes = false;
+    let mut in_double_quotes = false;
+    let mut escaped = false;
+
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if !in_single_quotes => {
+                escaped = true;
+            }
+            '\'' if !in_double_quotes => {
+                in_single_quotes = !in_single_quotes;
+            }
+            '"' if !in_single_quotes => {
+                in_double_quotes = !in_double_quotes;
+            }
+            ch if ch.is_whitespace() && !in_single_quotes && !in_double_quotes => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
 }
 
 #[cfg(test)]
@@ -308,6 +366,44 @@ mod tests {
             }
             _ => panic!("expected CommandSpawnFailed"),
         }
+    }
+
+    #[test]
+    fn given_spawn_error_with_quoted_env_assignment_then_redaction_keeps_executable_only() {
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
+            io::ErrorKind::NotFound,
+        )]);
+
+        let result = execute_command(
+            "TOKEN=\"super secret\" API_KEY='another secret' ./deploy --arg value",
+            &runner,
+        );
+
+        match result {
+            Err(Error::CommandSpawnFailed { command, .. }) => {
+                assert_eq!(command, "./deploy <args redacted>");
+                assert!(!command.contains("super secret"));
+                assert!(!command.contains("another secret"));
+                assert!(!command.contains("API_KEY"));
+            }
+            _ => panic!("expected CommandSpawnFailed"),
+        }
+    }
+
+    #[test]
+    fn given_command_without_env_prefix_when_redacting_then_executable_is_preserved() {
+        let redacted = redact_command("deploy --token super-secret-value");
+        assert_eq!(redacted, "deploy <args redacted>");
+    }
+
+    #[test]
+    fn given_long_executable_when_redacting_then_name_is_truncated() {
+        let executable = "a".repeat(120);
+        let command = format!("{executable} --flag");
+
+        let redacted = redact_command(&command);
+
+        assert_eq!(redacted, format!("{}... <args redacted>", "a".repeat(77)));
     }
 
     #[test]
