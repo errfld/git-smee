@@ -131,7 +131,9 @@ fn redact_command(command: &str) -> String {
         redacted.truncate(77);
         redacted.push_str("...");
     }
-    if let Some(index) = executable_index && tokens.len() > index + 1 {
+    if let Some(index) = executable_index
+        && tokens.len() > index + 1
+    {
         redacted.push_str(" <args redacted>");
     }
     redacted
