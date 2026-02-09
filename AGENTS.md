@@ -95,3 +95,4 @@ gh dash
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
+- Config extension checks should be ASCII case-insensitive so `.TOML`/mixed-case filenames work consistently across macOS and Windows defaults.
