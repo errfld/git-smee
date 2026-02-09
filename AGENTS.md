@@ -95,3 +95,4 @@ gh dash
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
+- Parallel hooks are best-effort fail-fast: the first failure fails the run, but already-started parallel commands may still complete.

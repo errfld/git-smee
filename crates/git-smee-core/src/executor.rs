@@ -434,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn given_failed_parallel_hook_when_executing_then_error_is_propagated() {
+    fn given_failed_parallel_hook_when_executing_then_in_flight_parallel_hooks_may_complete() {
         let hooks = vec![
             HookDefinition {
                 command: "sequential".to_string(),
@@ -460,6 +460,7 @@ mod tests {
 
         assert!(matches!(result, Err(Error::ExecutionFailed(23))));
         assert_eq!(calls[0], "sequential");
+        assert!(calls.iter().any(|call| call == "parallel-ok"));
         assert!(calls.iter().any(|call| call == "parallel-fail"));
     }
 }
