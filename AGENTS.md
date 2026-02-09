@@ -94,4 +94,10 @@ gh dash
 
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
+## Implementation Guidance
+
+- Normalize user-provided config paths from `--config` and `GIT_SMEE_CONFIG` before use; on Unix this includes expanding leading `~` so runtime reads and installed hook scripts reference real absolute paths.
+
 ## Learnings
+
+- Issue #51: expanding leading `~` during CLI config path resolution avoids writing literal-tilde paths into hook scripts and keeps install/run behavior consistent across interactive and non-interactive environments.

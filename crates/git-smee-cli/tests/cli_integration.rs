@@ -274,6 +274,78 @@ command = "echo env"
     assert!(!test_repo.path.join(".git/hooks/pre-commit").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn given_tilde_config_flag_when_installing_then_cli_expands_home_path_for_hook_script() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let fake_home = TempDir::new().expect("failed to create fake home");
+    let home_config_path = fake_home
+        .path()
+        .join(".config/git-smee/tilde-cli-config.toml");
+    fs::create_dir_all(home_config_path.parent().expect("missing parent")).unwrap();
+    fs::write(
+        &home_config_path,
+        r#"
+[[pre-commit]]
+command = "echo from-tilde-cli"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .env("HOME", fake_home.path())
+        .arg("--config")
+        .arg("~/.config/git-smee/tilde-cli-config.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    assert!(hook_content.contains(home_config_path.to_string_lossy().as_ref()));
+    assert!(!hook_content.contains("~/.config/git-smee/tilde-cli-config.toml"));
+}
+
+#[cfg(unix)]
+#[test]
+fn given_tilde_git_smee_config_env_when_installing_then_cli_expands_home_path_for_hook_script() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let fake_home = TempDir::new().expect("failed to create fake home");
+    let home_config_path = fake_home
+        .path()
+        .join(".config/git-smee/tilde-env-config.toml");
+    fs::create_dir_all(home_config_path.parent().expect("missing parent")).unwrap();
+    fs::write(
+        &home_config_path,
+        r#"
+[[pre-push]]
+command = "echo from-tilde-env"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .env("HOME", fake_home.path())
+        .env(
+            "GIT_SMEE_CONFIG",
+            "~/.config/git-smee/tilde-env-config.toml",
+        )
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-push")).expect("missing hook");
+
+    assert!(hook_content.contains(home_config_path.to_string_lossy().as_ref()));
+    assert!(!hook_content.contains("~/.config/git-smee/tilde-env-config.toml"));
+}
+
 #[test]
 fn given_config_flag_and_env_when_installing_then_flag_takes_precedence() {
     let test_repo = common::TestRepo::default();
