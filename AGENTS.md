@@ -95,3 +95,4 @@ gh dash
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
+- Command redaction should use quote-aware tokenization and strict `KEY=value` detection so inline env secrets stay hidden even when values contain spaces.
