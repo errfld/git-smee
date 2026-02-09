@@ -57,33 +57,6 @@ CHILD_ID=$(gh api "repos/$REPO/issues/<child>" --jq .id)
 printf '{"sub_issue_id": %s}\n' "$CHILD_ID" \
   | gh api -X POST "repos/$REPO/issues/<parent>/sub_issues" --input -
 ```
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-1. **File issues for remaining work** - create follow-up GitHub issues for any unfinished work.
-2. **Run quality gates** (if code changed) - tests, linters, builds.
-3. **Update issue state** - move active issue(s) to correct status labels and close completed issue(s).
-4. **Push to remote** - mandatory:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - clear stashes, prune stale branches.
-6. **Verify** - all intended changes are committed and pushed.
-7. **Hand off** - leave clear context in issue comments.
-
-## Workflow Pattern
-
-1. **Start**: Find unblocked work in GitHub Project views or issue search.
-2. **Claim**: Assign yourself and add `status:in_progress`.
-3. **Work**: Implement the task and keep issue comments updated.
-   For detailed step-by-step implementation instructions, see **Required Implementation Workflow** below.
-4. **Complete**: Close the issue with commit/PR reference.
-5. **Sync**: Ensure branch is rebased and pushed.
-
 ## Required Implementation Workflow
 
 Follow this workflow for every implementation task:
@@ -97,8 +70,9 @@ Follow this workflow for every implementation task:
    - 4.3 Ensure behavior is correct, tests are sufficient, and code is production-ready.
    - 4.4 Review your own changes before publishing.
 5. Push the branch and open a pull request.
-6. Wait for review and address PR comments.
-7. Once the PR is merged by a maintainer or authorized reviewer, close the linked GitHub issue.
+6. Note learnings concise in `AGENTS.md` under the `Learnings` section.
+7. Wait for review and address PR comments.
+8. Once the PR is merged by a maintainer or authorized reviewer, close the linked GitHub issue.
 
 ## Key Conventions
 
@@ -119,3 +93,5 @@ gh dash
 ```
 
 Prefer `gh` / `gh api` for deterministic write operations by agents.
+
+## Learnings
