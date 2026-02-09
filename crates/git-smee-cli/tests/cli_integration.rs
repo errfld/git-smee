@@ -129,6 +129,22 @@ command = "   "
 }
 
 #[test]
+fn given_empty_config_when_install_then_no_hooks_present_error_is_reported() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config("");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: No hooks present in the configuration to install")
+                .and(predicate::str::contains("NoHooksPresent").not()),
+        );
+}
+
+#[test]
 fn given_existing_config_when_init_without_force_then_it_refuses_to_overwrite() {
     let test_repo = common::TestRepo::default();
     let original = fs::read_to_string(test_repo.config_path()).unwrap();
