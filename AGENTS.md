@@ -99,6 +99,10 @@ gh dash
 
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
+## Learnings
+
+- Keep CLI regression coverage for empty hook configs so `git smee install` continues surfacing a human-readable `No hooks present...` error instead of internal enum names.
+
 ## Implementation Notes (Conflict-Free)
 
 `AGENTS.md` is a stable policy/process document and should not be used as a running implementation log.
