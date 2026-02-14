@@ -100,21 +100,4 @@ gh dash
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
-
 - Keep CLI regression coverage for empty hook configs so `git smee install` continues surfacing a human-readable `No hooks present...` error instead of internal enum names.
-
-## Implementation Notes (Conflict-Free)
-
-`AGENTS.md` is a stable policy/process document and should not be used as a running implementation log.
-
-Store per-task learnings and change notes in the task issue itself using comments:
-
-```bash
-gh issue comment <number> --body-file .github/templates/implementation-note.md
-```
-
-For durable, cross-task knowledge:
-
-- Open/update a `memory` issue for durable operational facts and recurring patterns.
-- Open/update a `decision` issue for architecture/process decisions and rationale.
-- Link related work using sub-issues/dependencies so implementation notes stay discoverable.
