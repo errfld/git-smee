@@ -53,7 +53,7 @@ impl SmeeConfig {
             return Err(Error::MissingFile);
         }
         let ext = path.extension().ok_or(Error::CanNotReadExtension)?;
-        if ext != "toml" {
+        if !ext.to_string_lossy().eq_ignore_ascii_case("toml") {
             return Err(Error::NotATomlFileExtension);
         }
         let data = fs::read(path).map_err(Error::ReadError)?;
@@ -247,6 +247,10 @@ pub enum ValidationError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     use super::*;
 
     const EXAMPLE_TOML: &str = "
@@ -272,6 +276,39 @@ mod tests {
             .expect("Second Hook Definition should be present");
         assert_eq!(hook_definition.command, "cargo test");
         assert!(!hook_definition.parallel_execution_allowed);
+    }
+
+    #[test]
+    fn given_uppercase_toml_extension_when_loading_then_config_is_accepted() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".git-smee.TOML");
+        fs::write(&path, EXAMPLE_TOML).unwrap();
+
+        let result = SmeeConfig::from_toml(&path);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn given_mixed_case_toml_extension_when_loading_then_config_is_accepted() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".git-smee.ToMl");
+        fs::write(&path, EXAMPLE_TOML).unwrap();
+
+        let result = SmeeConfig::from_toml(&path);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn given_non_toml_extension_when_loading_then_error_is_returned() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".git-smee.yaml");
+        fs::write(&path, EXAMPLE_TOML).unwrap();
+
+        let result = SmeeConfig::from_toml(&path);
+
+        assert!(matches!(result, Err(Error::NotATomlFileExtension)));
     }
 
     #[test]
