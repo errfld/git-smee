@@ -96,3 +96,5 @@ Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
 - Config extension checks should be ASCII case-insensitive so `.TOML`/mixed-case filenames work consistently across macOS and Windows defaults.
+- Keep CLI regression coverage for empty hook configs so `git smee install` continues surfacing a human-readable `No hooks present...` error instead of internal enum names.
+
