@@ -26,21 +26,26 @@ pub enum Error {
     },
 }
 
-/// Finds the git repository root by walking up from the current directory
-/// looking for a `.git` directory.
+/// Finds the git repository root.
+///
+/// - For a non-bare repository, this resolves the top-level worktree path.
+/// - For a bare repository, this resolves to the current working directory.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use git_smee_core::find_git_root;
-/// use std::{env, fs};
+/// use std::{env, process::Command};
 /// use tempfile::tempdir;
 ///
 /// let temp_dir = tempdir().unwrap();
-/// let git_dir = temp_dir.path().join(".git");
-/// fs::create_dir(&git_dir).unwrap();
+/// Command::new("git")
+///     .arg("init")
+///     .current_dir(temp_dir.path())
+///     .output()
+///     .unwrap();
 /// let nested = temp_dir.path().join("nested");
-/// fs::create_dir(&nested).unwrap();
+/// std::fs::create_dir(&nested).unwrap();
 ///
 /// let original_dir = env::current_dir().unwrap();
 /// env::set_current_dir(&nested).unwrap();
@@ -48,22 +53,56 @@ pub enum Error {
 /// let repo_root = find_git_root().unwrap();
 ///
 /// env::set_current_dir(&original_dir).unwrap();
-/// assert!(repo_root.join(".git").exists());
+/// assert_eq!(repo_root, temp_dir.path().canonicalize().unwrap());
 /// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
-    let mut current = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
+    let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
 
-    loop {
-        let git_dir = current.join(".git");
-        if git_dir.exists() {
-            return Ok(current);
-        }
-
-        if !current.pop() {
-            // Reached filesystem root without finding .git
-            return Err(Error::NotInGitRepository);
+    if git_rev_parse_bool("--is-inside-work-tree")? {
+        if let Some(root) = git_rev_parse_value("--show-toplevel")? {
+            return Ok(PathBuf::from(root));
         }
     }
+
+    if git_rev_parse_bool("--is-bare-repository")? {
+        return current_dir
+            .canonicalize()
+            .map_err(Error::FailedToChangeDirectory);
+    }
+
+    Err(Error::NotInGitRepository)
+}
+
+fn git_rev_parse_bool(flag: &str) -> Result<bool, Error> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg(flag)
+        .output()
+        .map_err(Error::FailedToExecuteGit)?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
+fn git_rev_parse_value(flag: &str) -> Result<Option<String>, Error> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg(flag)
+        .output()
+        .map_err(Error::FailedToExecuteGit)?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(value))
 }
 
 /// Validates that we're in a git repository and changes to the repository root.
@@ -72,14 +111,17 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
 ///
 /// ```rust
 /// use git_smee_core::ensure_in_repo_root;
-/// use std::{env, fs};
+/// use std::{env, process::Command};
 /// use tempfile::tempdir;
 ///
 /// let temp_dir = tempdir().unwrap();
-/// let git_dir = temp_dir.path().join(".git");
-/// fs::create_dir(&git_dir).unwrap();
+/// Command::new("git")
+///     .arg("init")
+///     .current_dir(temp_dir.path())
+///     .output()
+///     .unwrap();
 /// let nested = temp_dir.path().join("nested");
-/// fs::create_dir(&nested).unwrap();
+/// std::fs::create_dir(&nested).unwrap();
 ///
 /// let original_dir = env::current_dir().unwrap();
 /// env::set_current_dir(&nested).unwrap();
@@ -88,7 +130,7 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
 /// let current_dir = env::current_dir().unwrap();
 ///
 /// env::set_current_dir(&original_dir).unwrap();
-/// assert!(current_dir.join(".git").exists());
+/// assert_eq!(current_dir, temp_dir.path().canonicalize().unwrap());
 /// ```
 pub fn ensure_in_repo_root() -> Result<(), Error> {
     let git_root = find_git_root()?;
@@ -153,8 +195,7 @@ mod tests {
     fn given_current_dir_is_git_root_when_finding_root_then_returns_current_dir() {
         let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let git_dir = temp_dir.path().join(".git");
-        fs::create_dir(&git_dir).unwrap();
+        git(temp_dir.path(), &["init"]);
 
         let original_dir = env::current_dir().unwrap();
         env::set_current_dir(temp_dir.path()).unwrap();
@@ -164,17 +205,15 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        // Verify that the result contains the .git directory
         let result_path = result.unwrap();
-        assert!(result_path.join(".git").exists());
+        assert_eq!(result_path, temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
     fn given_current_dir_is_subdirectory_of_repo_when_finding_root_then_returns_repo_root() {
         let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let git_dir = temp_dir.path().join(".git");
-        fs::create_dir(&git_dir).unwrap();
+        git(temp_dir.path(), &["init"]);
         let sub_dir = temp_dir.path().join("subdir");
         fs::create_dir(&sub_dir).unwrap();
 
@@ -186,17 +225,15 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        // Verify that the result contains the .git directory
         let result_path = result.unwrap();
-        assert!(result_path.join(".git").exists());
+        assert_eq!(result_path, temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
     fn given_current_dir_is_deeply_nested_subdirectory_when_finding_root_then_returns_repo_root() {
         let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let git_dir = temp_dir.path().join(".git");
-        fs::create_dir(&git_dir).unwrap();
+        git(temp_dir.path(), &["init"]);
 
         // Create nested directories: a/b/c
         let nested_path = temp_dir.path().join("a").join("b").join("c");
@@ -210,32 +247,46 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        // Verify that the result contains the .git directory
         let result_path = result.unwrap();
-        assert!(result_path.join(".git").exists());
+        assert_eq!(result_path, temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
     fn given_not_in_git_repo_when_finding_root_then_returns_error() {
-        // Note: This test is challenging because walking up from /tmp may eventually find
-        // a system git repo. We test the error path implicitly by verifying that
-        // find_git_root successfully finds .git when it exists in all the positive test cases.
-        // The actual error case would occur if we were in a directory with no .git
-        // anywhere in its ancestors up to the filesystem root.
-        // This is difficult to test in a typical development environment.
-        // We verify the error type exists and is properly defined in other tests.
-        assert!(matches!(
-            Err::<(), Error>(Error::NotInGitRepository),
-            Err(Error::NotInGitRepository)
-        ));
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(temp_dir.path()).unwrap();
+
+        let result = find_git_root();
+
+        env::set_current_dir(&original_dir).unwrap();
+
+        assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_bare_repo_when_finding_root_then_returns_current_dir() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init", "--bare"]);
+
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(temp_dir.path()).unwrap();
+
+        let result = find_git_root();
+
+        env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]
     fn given_in_git_repo_when_ensuring_in_repo_root_then_succeeds() {
         let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let git_dir = temp_dir.path().join(".git");
-        fs::create_dir(&git_dir).unwrap();
+        git(temp_dir.path(), &["init"]);
         let sub_dir = temp_dir.path().join("subdir");
         fs::create_dir(&sub_dir).unwrap();
 
@@ -250,7 +301,7 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        // Verify that we moved to a directory that contains .git
+        assert_eq!(current, temp_dir.path().canonicalize().unwrap());
         assert!(git_exists);
     }
 
@@ -269,6 +320,23 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_bare_repo_when_ensuring_in_repo_root_then_succeeds() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init", "--bare"]);
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(temp_dir.path()).unwrap();
+
+        let result = ensure_in_repo_root();
+        let current = env::current_dir().unwrap();
+
+        env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(current, temp_dir.path().canonicalize().unwrap());
     }
 
     #[test]

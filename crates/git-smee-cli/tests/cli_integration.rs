@@ -72,6 +72,28 @@ fn given_git_smee_when_install_then_hooks_are_present() {
 }
 
 #[test]
+fn given_bare_repo_when_install_then_hooks_are_present() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    fs::write(
+        bare_repo.path().join(".git-smee.toml"),
+        r#"
+[[pre-receive]]
+command = "echo bare"
+"#,
+    )
+    .expect("failed to write config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .arg("install")
+        .assert()
+        .success();
+
+    assert!(bare_repo.path().join("hooks").join("pre-receive").exists());
+}
+
+#[test]
 fn given_invalid_hook_when_run_then_user_friendly_error() {
     let test_repo = common::TestRepo::default();
 
@@ -387,6 +409,26 @@ command = "exit 1"
 }
 
 #[test]
+fn given_bare_repo_when_running_then_hook_executes() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    fs::write(
+        bare_repo.path().join(".git-smee.toml"),
+        r#"
+[[pre-receive]]
+command = "echo bare-run"
+"#,
+    )
+    .expect("failed to write config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .args(["run", "pre-receive"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn given_custom_config_path_when_installing_then_hook_script_contains_executable_and_config_path() {
     let test_repo = common::TestRepo::default();
     let custom_config = test_repo.write_config_at(
@@ -495,4 +537,18 @@ fn given_custom_config_path_when_initializing_then_init_writes_requested_file() 
 
     assert!(custom_config_path.exists());
     assert!(!test_repo.config_path().exists());
+}
+
+#[test]
+fn given_bare_repo_when_initializing_then_init_writes_default_config() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(bare_repo.path().join(".git-smee.toml").exists());
 }
