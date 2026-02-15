@@ -155,7 +155,7 @@ fn git_rev_parse_path(flag: &str) -> Result<Option<PathBuf>, Error> {
         use std::os::unix::ffi::OsStringExt;
 
         let value = OsString::from_vec(trimmed.to_vec());
-        return Ok(Some(PathBuf::from(value)));
+        Ok(Some(PathBuf::from(value)))
     }
 
     #[cfg(not(unix))]
