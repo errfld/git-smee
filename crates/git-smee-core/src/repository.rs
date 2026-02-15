@@ -82,7 +82,9 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
         && let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")?
     {
         if git_rev_parse_bool("--is-bare-repository")? {
-            return git_dir.canonicalize().map_err(Error::FailedToChangeDirectory);
+            return git_dir
+                .canonicalize()
+                .map_err(Error::FailedToChangeDirectory);
         }
 
         if git_dir.file_name() == Some(OsStr::new(".git"))
@@ -93,7 +95,9 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
                 .map_err(Error::FailedToChangeDirectory);
         }
 
-        return git_dir.canonicalize().map_err(Error::FailedToChangeDirectory);
+        return git_dir
+            .canonicalize()
+            .map_err(Error::FailedToChangeDirectory);
     }
 
     if git_rev_parse_bool("--is-bare-repository")? {
@@ -541,7 +545,8 @@ mod tests {
     }
 
     #[test]
-    fn given_current_dir_is_git_directory_when_ensuring_in_repo_root_then_changes_to_worktree_root() {
+    fn given_current_dir_is_git_directory_when_ensuring_in_repo_root_then_changes_to_worktree_root()
+    {
         let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         git(temp_dir.path(), &["init"]);
