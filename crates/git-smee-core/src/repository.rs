@@ -111,9 +111,12 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
             .map_err(Error::FailedToChangeDirectory);
     }
 
-    // Defensive fallback: handle edge case where bare repo detection succeeds
-    // but git-dir detection did not.
     if git_rev_parse_bool("--is-bare-repository")? {
+        if let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")? {
+            return git_dir
+                .canonicalize()
+                .map_err(Error::FailedToChangeDirectory);
+        }
         return current_dir
             .canonicalize()
             .map_err(Error::FailedToChangeDirectory);
@@ -161,7 +164,7 @@ fn git_rev_parse_path(flag: &str) -> Result<Option<PathBuf>, Error> {
         });
     }
 
-    let trimmed = trim_ascii_whitespace(&output.stdout);
+    let trimmed = trim_git_output_path(&output.stdout);
     if trimmed.is_empty() {
         return Ok(None);
     }
@@ -203,16 +206,12 @@ fn stderr_or_status(stderr: &[u8], status_code: Option<i32>) -> String {
     }
 }
 
-fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|byte| !byte.is_ascii_whitespace())
-        .map_or(start, |index| index + 1);
-    &bytes[start..end]
+fn trim_git_output_path(bytes: &[u8]) -> &[u8] {
+    let mut end = bytes.len();
+    while end > 0 && (bytes[end - 1] == b'\n' || bytes[end - 1] == b'\r') {
+        end -= 1;
+    }
+    &bytes[..end]
 }
 
 /// Validates that we're in a git repository and changes to the repository root.
@@ -605,6 +604,52 @@ mod tests {
             normalize_path_for_compare(&result.unwrap()),
             normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
         );
+    }
+
+    #[test]
+    fn given_bare_git_dir_env_outside_repo_when_finding_root_then_returns_bare_repo_path() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let bare_repo = temp_dir.path().join("remote.git");
+        fs::create_dir(&bare_repo).unwrap();
+        git(&bare_repo, &["init", "--bare"]);
+
+        let outside_dir = temp_dir.path().join("outside");
+        fs::create_dir(&outside_dir).unwrap();
+        let original_dir = env::current_dir().unwrap();
+        let original_git_dir = env::var_os("GIT_DIR");
+        let original_git_work_tree = env::var_os("GIT_WORK_TREE");
+        env::set_current_dir(&outside_dir).unwrap();
+        unsafe { env::set_var("GIT_DIR", bare_repo.as_os_str()) };
+        unsafe { env::remove_var("GIT_WORK_TREE") };
+
+        let result = find_git_root();
+
+        env::set_current_dir(&original_dir).unwrap();
+        match original_git_dir {
+            Some(value) => unsafe { env::set_var("GIT_DIR", value) },
+            None => unsafe { env::remove_var("GIT_DIR") },
+        }
+        match original_git_work_tree {
+            Some(value) => unsafe { env::set_var("GIT_WORK_TREE", value) },
+            None => unsafe { env::remove_var("GIT_WORK_TREE") },
+        }
+
+        assert!(result.is_ok());
+        assert_eq!(
+            normalize_path_for_compare(&result.unwrap()),
+            normalize_path_for_compare(&bare_repo.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn given_git_output_with_trailing_newline_when_trimming_then_only_newline_is_removed() {
+        assert_eq!(trim_git_output_path(b"/repo/path\n"), b"/repo/path");
+    }
+
+    #[test]
+    fn given_git_output_with_trailing_space_when_trimming_then_space_is_preserved() {
+        assert_eq!(trim_git_output_path(b"/repo/path \n"), b"/repo/path ");
     }
 
     fn git(repo: &Path, args: &[&str]) {
