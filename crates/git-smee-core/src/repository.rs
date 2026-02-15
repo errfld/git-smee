@@ -206,7 +206,10 @@ mod tests {
 
         assert!(result.is_ok());
         let result_path = result.unwrap();
-        assert_eq!(result_path, temp_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            normalize_path_for_compare(&result_path),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
     }
 
     #[test]
@@ -226,7 +229,10 @@ mod tests {
 
         assert!(result.is_ok());
         let result_path = result.unwrap();
-        assert_eq!(result_path, temp_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            normalize_path_for_compare(&result_path),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
     }
 
     #[test]
@@ -248,7 +254,10 @@ mod tests {
 
         assert!(result.is_ok());
         let result_path = result.unwrap();
-        assert_eq!(result_path, temp_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            normalize_path_for_compare(&result_path),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
     }
 
     #[test]
@@ -279,7 +288,10 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), temp_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            normalize_path_for_compare(&result.unwrap()),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
     }
 
     #[test]
@@ -301,7 +313,10 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        assert_eq!(current, temp_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            normalize_path_for_compare(&current),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
         assert!(git_exists);
     }
 
@@ -336,7 +351,10 @@ mod tests {
         env::set_current_dir(&original_dir).unwrap();
 
         assert!(result.is_ok());
-        assert_eq!(current, temp_dir.path().canonicalize().unwrap());
+        assert_eq!(
+            normalize_path_for_compare(&current),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
     }
 
     #[test]
@@ -429,5 +447,13 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn normalize_path_for_compare(path: &Path) -> String {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        normalized
+            .strip_prefix("//?/")
+            .unwrap_or(&normalized)
+            .to_string()
     }
 }
