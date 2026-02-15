@@ -75,7 +75,18 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
     if git_rev_parse_bool("--is-inside-work-tree")?
         && let Some(root) = git_rev_parse_path("--show-toplevel")?
     {
-        return root.canonicalize().map_err(Error::FailedToChangeDirectory);
+        let canonical_root = root
+            .canonicalize()
+            .map_err(Error::FailedToChangeDirectory)?;
+        if !git_rev_parse_bool("--is-bare-repository")?
+            && canonical_root.file_name() == Some(OsStr::new(".git"))
+            && let Some(worktree_root) = canonical_root.parent()
+        {
+            return worktree_root
+                .canonicalize()
+                .map_err(Error::FailedToChangeDirectory);
+        }
+        return Ok(canonical_root);
     }
 
     if git_rev_parse_bool("--is-inside-git-dir")?
@@ -100,6 +111,8 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
             .map_err(Error::FailedToChangeDirectory);
     }
 
+    // Defensive fallback: handle edge case where bare repo detection succeeds
+    // but git-dir detection did not.
     if git_rev_parse_bool("--is-bare-repository")? {
         return current_dir
             .canonicalize()
@@ -562,6 +575,34 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(
             normalize_path_for_compare(&current),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn given_git_dir_env_in_hook_context_when_finding_root_then_returns_worktree_root() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        let git_dir = temp_dir.path().join(".git");
+        let original_dir = env::current_dir().unwrap();
+        let original_git_dir = env::var_os("GIT_DIR");
+        env::set_current_dir(&git_dir).unwrap();
+
+        // Git hook processes in non-bare repositories typically inherit GIT_DIR=.
+        unsafe { env::set_var("GIT_DIR", ".") };
+
+        let result = find_git_root();
+
+        env::set_current_dir(&original_dir).unwrap();
+        match original_git_dir {
+            Some(value) => unsafe { env::set_var("GIT_DIR", value) },
+            None => unsafe { env::remove_var("GIT_DIR") },
+        }
+
+        assert!(result.is_ok());
+        assert_eq!(
+            normalize_path_for_compare(&result.unwrap()),
             normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
         );
     }
