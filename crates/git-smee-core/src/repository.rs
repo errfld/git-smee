@@ -1,5 +1,6 @@
 use std::{
     env,
+    ffi::OsStr,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -24,6 +25,10 @@ pub enum Error {
         repository_root: String,
         git_path: String,
     },
+    #[error("git rev-parse {flag} failed: {stderr}")]
+    FailedToQueryGitRevParse { flag: String, stderr: String },
+    #[error("git rev-parse {flag} returned non-UTF-8 output on non-Unix platforms")]
+    InvalidGitPathEncoding { flag: String },
 }
 
 /// Finds the git repository root.
@@ -68,9 +73,27 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
     let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
 
     if git_rev_parse_bool("--is-inside-work-tree")?
-        && let Some(root) = git_rev_parse_value("--show-toplevel")?
+        && let Some(root) = git_rev_parse_path("--show-toplevel")?
     {
-        return Ok(PathBuf::from(root));
+        return root.canonicalize().map_err(Error::FailedToChangeDirectory);
+    }
+
+    if git_rev_parse_bool("--is-inside-git-dir")?
+        && let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")?
+    {
+        if git_rev_parse_bool("--is-bare-repository")? {
+            return git_dir.canonicalize().map_err(Error::FailedToChangeDirectory);
+        }
+
+        if git_dir.file_name() == Some(OsStr::new(".git"))
+            && let Some(worktree_root) = git_dir.parent()
+        {
+            return worktree_root
+                .canonicalize()
+                .map_err(Error::FailedToChangeDirectory);
+        }
+
+        return git_dir.canonicalize().map_err(Error::FailedToChangeDirectory);
     }
 
     if git_rev_parse_bool("--is-bare-repository")? {
@@ -90,13 +113,20 @@ fn git_rev_parse_bool(flag: &str) -> Result<bool, Error> {
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
-        return Ok(false);
+        if is_not_in_repository_error(&output.stderr) {
+            return Ok(false);
+        }
+        let stderr = stderr_or_status(&output.stderr, output.status.code());
+        return Err(Error::FailedToQueryGitRevParse {
+            flag: flag.to_string(),
+            stderr,
+        });
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
 
-fn git_rev_parse_value(flag: &str) -> Result<Option<String>, Error> {
+fn git_rev_parse_path(flag: &str) -> Result<Option<PathBuf>, Error> {
     let output = Command::new("git")
         .arg("rev-parse")
         .arg(flag)
@@ -104,14 +134,68 @@ fn git_rev_parse_value(flag: &str) -> Result<Option<String>, Error> {
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
+        if is_not_in_repository_error(&output.stderr) {
+            return Ok(None);
+        }
+        let stderr = stderr_or_status(&output.stderr, output.status.code());
+        return Err(Error::FailedToQueryGitRevParse {
+            flag: flag.to_string(),
+            stderr,
+        });
+    }
+
+    let trimmed = trim_ascii_whitespace(&output.stdout);
+    if trimmed.is_empty() {
         return Ok(None);
     }
 
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() {
-        return Ok(None);
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let value = OsString::from_vec(trimmed.to_vec());
+        return Ok(Some(PathBuf::from(value)));
     }
-    Ok(Some(value))
+
+    #[cfg(not(unix))]
+    {
+        let value =
+            String::from_utf8(trimmed.to_vec()).map_err(|_| Error::InvalidGitPathEncoding {
+                flag: flag.to_string(),
+            })?;
+        Ok(Some(PathBuf::from(value)))
+    }
+}
+
+fn is_not_in_repository_error(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr)
+        .to_ascii_lowercase()
+        .contains("not a git repository")
+}
+
+fn stderr_or_status(stderr: &[u8], status_code: Option<i32>) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if stderr.is_empty() {
+        match status_code {
+            Some(code) => format!("git exited with status {code}"),
+            None => "git terminated by signal".to_string(),
+        }
+    } else {
+        stderr
+    }
+}
+
+fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |index| index + 1);
+    &bytes[start..end]
 }
 
 /// Validates that we're in a git repository and changes to the repository root.
@@ -434,6 +518,47 @@ mod tests {
         let expected_path = PathBuf::from(expected.trim());
 
         assert_eq!(resolved, expected_path);
+    }
+
+    #[test]
+    fn given_current_dir_is_git_directory_when_finding_root_then_returns_worktree_root() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        let git_dir = temp_dir.path().join(".git");
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(&git_dir).unwrap();
+
+        let result = find_git_root();
+
+        env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(
+            normalize_path_for_compare(&result.unwrap()),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn given_current_dir_is_git_directory_when_ensuring_in_repo_root_then_changes_to_worktree_root() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        let git_dir = temp_dir.path().join(".git");
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(&git_dir).unwrap();
+
+        let result = ensure_in_repo_root();
+        let current = env::current_dir().unwrap();
+
+        env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_ok());
+        assert_eq!(
+            normalize_path_for_compare(&current),
+            normalize_path_for_compare(&temp_dir.path().canonicalize().unwrap())
+        );
     }
 
     fn git(repo: &Path, args: &[&str]) {
