@@ -100,4 +100,5 @@ gh dash
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
+- Command redaction should use quote-aware tokenization and strict `KEY=value` detection so inline env secrets stay hidden even when values contain spaces.
 - Keep CLI regression coverage for empty hook configs so `git smee install` continues surfacing a human-readable `No hooks present...` error instead of internal enum names.
