@@ -53,7 +53,16 @@ pub enum Error {
 /// let repo_root = find_git_root().unwrap();
 ///
 /// env::set_current_dir(&original_dir).unwrap();
-/// assert_eq!(repo_root, temp_dir.path().canonicalize().unwrap());
+///
+/// let normalize = |path: &std::path::Path| {
+///     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+///     canonical
+///         .to_string_lossy()
+///         .replace('\\', "/")
+///         .trim_start_matches("//?/")
+///         .to_string()
+/// };
+/// assert_eq!(normalize(&repo_root), normalize(temp_dir.path()));
 /// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
     let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
@@ -130,7 +139,16 @@ fn git_rev_parse_value(flag: &str) -> Result<Option<String>, Error> {
 /// let current_dir = env::current_dir().unwrap();
 ///
 /// env::set_current_dir(&original_dir).unwrap();
-/// assert_eq!(current_dir, temp_dir.path().canonicalize().unwrap());
+///
+/// let normalize = |path: &std::path::Path| {
+///     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+///     canonical
+///         .to_string_lossy()
+///         .replace('\\', "/")
+///         .trim_start_matches("//?/")
+///         .to_string()
+/// };
+/// assert_eq!(normalize(&current_dir), normalize(temp_dir.path()));
 /// ```
 pub fn ensure_in_repo_root() -> Result<(), Error> {
     let git_root = find_git_root()?;
