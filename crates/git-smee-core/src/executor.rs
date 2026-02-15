@@ -93,9 +93,7 @@ impl CommandRunner for PlatformCommandRunner<'_> {
                 shell_command.arg("--");
                 shell_command.args(hook_args);
             }
-            Platform::Windows => {
-                shell_command.args(hook_args);
-            }
+            Platform::Windows => {}
         }
         shell_command.status().map(|status| status.code())
     }
