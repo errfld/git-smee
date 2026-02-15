@@ -443,6 +443,7 @@ mod tests {
         let result = execute_command(
             "TOKEN=\"super secret\" API_KEY='another secret' ./deploy --arg value",
             &runner,
+            &[],
         );
 
         match result {
