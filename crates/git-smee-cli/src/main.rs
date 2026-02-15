@@ -98,14 +98,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 fn resolve_config_path(cli_config: Option<PathBuf>) -> PathBuf {
     if let Some(path) = cli_config {
-        return path;
+        return expand_user_home_path(path);
     }
     if let Ok(path_from_env) = env::var("GIT_SMEE_CONFIG")
         && !path_from_env.trim().is_empty()
     {
-        return PathBuf::from(path_from_env);
+        return expand_user_home_path(PathBuf::from(path_from_env));
     }
     PathBuf::from_str(DEFAULT_CONFIG_FILE_NAME).expect("default config path should be valid")
+}
+
+#[cfg(unix)]
+fn expand_user_home_path(path: PathBuf) -> PathBuf {
+    let Some(home_dir) = env::var_os("HOME").filter(|home| !home.is_empty()) else {
+        return path;
+    };
+    let home_dir = PathBuf::from(home_dir);
+
+    if let Ok(rest) = path.strip_prefix("~") {
+        return home_dir.join(rest);
+    }
+
+    path
+}
+
+#[cfg(not(unix))]
+fn expand_user_home_path(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn read_config_file(config_path: &Path) -> Result<SmeeConfig, config::Error> {
