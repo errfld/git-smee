@@ -184,6 +184,10 @@ commands (`$1`, `$2`, ...). Example:
 command = "test -n \"$1\""
 ```
 
+On all platforms, git-smee also exports forwarded hook args as environment variables:
+- `GIT_SMEE_HOOK_ARGC`: number of forwarded args
+- `GIT_SMEE_HOOK_ARG_1` ... `GIT_SMEE_HOOK_ARG_N`: individual argument values
+
 ## CLI Commands
 
 ```bash

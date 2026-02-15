@@ -84,6 +84,10 @@ impl CommandRunner for PlatformCommandRunner<'_> {
     fn run(&self, command: &str, hook_args: &[String]) -> Result<Option<i32>, std::io::Error> {
         let mut shell_command = self.platform.create_command();
         shell_command.arg(command);
+        shell_command.env("GIT_SMEE_HOOK_ARGC", hook_args.len().to_string());
+        for (index, arg) in hook_args.iter().enumerate() {
+            shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
+        }
         match self.platform {
             Platform::Unix => {
                 shell_command.arg("--");
