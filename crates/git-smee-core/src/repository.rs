@@ -58,10 +58,10 @@ pub enum Error {
 pub fn find_git_root() -> Result<PathBuf, Error> {
     let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
 
-    if git_rev_parse_bool("--is-inside-work-tree")? {
-        if let Some(root) = git_rev_parse_value("--show-toplevel")? {
-            return Ok(PathBuf::from(root));
-        }
+    if git_rev_parse_bool("--is-inside-work-tree")?
+        && let Some(root) = git_rev_parse_value("--show-toplevel")?
+    {
+        return Ok(PathBuf::from(root));
     }
 
     if git_rev_parse_bool("--is-bare-repository")? {
