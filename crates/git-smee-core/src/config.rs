@@ -1,6 +1,7 @@
 use core::fmt;
 use std::{
     collections::{HashMap, hash_map},
+    ffi::OsStr,
     fs,
     path::Path,
     str::FromStr,
@@ -53,7 +54,7 @@ impl SmeeConfig {
             return Err(Error::MissingFile);
         }
         let ext = path.extension().ok_or(Error::CanNotReadExtension)?;
-        if !ext.to_string_lossy().eq_ignore_ascii_case("toml") {
+        if !ext.eq_ignore_ascii_case(OsStr::new("toml")) {
             return Err(Error::NotATomlFileExtension);
         }
         let data = fs::read(path).map_err(Error::ReadError)?;
