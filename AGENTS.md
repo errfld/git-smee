@@ -65,12 +65,17 @@ Follow this workflow for every implementation task:
 2. Mark the issue as `status:in_progress` and assign yourself.
 3. Create a worktree and branch named `gh-<NUMBER>/<short-description>` (e.g., `gh-48/agents-workflow-github-only`).
 4. Start implementation.
-   - 4.1 Note operational/process improvements and implementation guidance in `AGENTS.md`.
-   - 4.2 Create new GitHub issues for discovered improvements/reworks with complete context for someone with no prior repository knowledge.
-   - 4.3 Ensure behavior is correct, tests are sufficient, and code is production-ready.
-   - 4.4 Review your own changes before publishing.
+   - 4.1 Before making changes, retrieve existing knowledge:
+     - `gh issue list --label memory --search "<domain or behavior>"`.
+     - `gh issue list --label decision --search "<topic>"`.
+     - `gh issue view <issue>` -- comments on blockers, parents, and linked follow-ups.
+     - Read any prior task notes for linked issues to avoid duplicate rediscovery.
+   - 4.2 Capture operational/process improvements and implementation guidance in GitHub issue comments on the active issue (not in `AGENTS.md`).
+   - 4.3 Create new GitHub issues for discovered improvements/reworks with complete context for someone with no prior repository knowledge.
+   - 4.4 Ensure behavior is correct, tests are sufficient, and code is production-ready.
+   - 4.5 Review your own changes before publishing.
 5. Push the branch and open a pull request.
-6. Note learnings concise in `AGENTS.md` under the `Learnings` section.
+6. Post a structured implementation note comment on the issue using `.github/templates/implementation-note.md` (or equivalent), including summary, validation, learnings, and follow-ups.
 7. Wait for review and address PR comments.
 8. Once the PR is merged by a maintainer or authorized reviewer, close the linked GitHub issue.
 
@@ -96,3 +101,4 @@ Prefer `gh` / `gh api` for deterministic write operations by agents.
 
 ## Learnings
 - Command redaction should use quote-aware tokenization and strict `KEY=value` detection so inline env secrets stay hidden even when values contain spaces.
+- Keep CLI regression coverage for empty hook configs so `git smee install` continues surfacing a human-readable `No hooks present...` error instead of internal enum names.
