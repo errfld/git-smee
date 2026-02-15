@@ -170,12 +170,26 @@ git-smee supports all standard Git lifecycle hooks:
 | `fsmonitor-watchman` | Integration with watchman file monitor |
 | `post-index-change` | Run after the index is written |
 
+### Hook argument forwarding
+
+When Git invokes a hook with positional arguments (for example `commit-msg <path>` or
+`post-checkout <old> <new> <flag>`), installed git-smee wrappers forward those arguments to
+`git smee run`.
+
+On Unix, forwarded hook arguments are available as shell positional parameters inside configured
+commands (`$1`, `$2`, ...). Example:
+
+```toml
+[[commit-msg]]
+command = "test -n \"$1\""
+```
+
 ## CLI Commands
 
 ```bash
 git smee init [--force] [--config <path>]       # Initialize a config file
 git smee install [--force] [--config <path>]    # Install hooks from the selected config
-git smee run <hook> [--config <path>]           # Run a specific git hook
+git smee [--config <path>] run <hook> [hook-args...]           # Run a specific git hook
 ```
 
 ## How it works (high level)
@@ -200,7 +214,8 @@ git smee run <hook> [--config <path>]           # Run a specific git hook
 
 3. The installer will write idempotent scripts into Git's effective hooks directory:
 
-   - Each script runs the installed `git-smee` executable directly with `--config <resolved path> run <hook>`.
+   - Each script runs the installed `git-smee` executable directly with `--config <resolved path> run <hook>`,
+     forwarding original Git hook positional arguments.
 
 4. The executor will run the configured commands for that hook and propagate exit codes back to Git.
 
