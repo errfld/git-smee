@@ -99,5 +99,14 @@ gh dash
 
 Prefer `gh` / `gh api` for deterministic write operations by agents.
 
+## Implementation Guidance
+
+- Normalize user-provided config paths from `--config` and `GIT_SMEE_CONFIG` before use; on Unix this includes expanding leading `~` so runtime reads and installed hook scripts reference real absolute paths.
+
 ## Learnings
+
+- Config extension checks should be ASCII case-insensitive so `.TOML`/mixed-case filenames work consistently across macOS and Windows defaults.
+- Issue #51: expanding leading `~` during CLI config path resolution avoids writing literal-tilde paths into hook scripts and keeps install/run behavior consistent across interactive and non-interactive environments.
+- Command redaction should use quote-aware tokenization and strict `KEY=value` detection so inline env secrets stay hidden even when values contain spaces.
 - Keep CLI regression coverage for empty hook configs so `git smee install` continues surfacing a human-readable `No hooks present...` error instead of internal enum names.
+
