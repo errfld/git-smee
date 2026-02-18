@@ -125,6 +125,27 @@ fn given_missing_config_when_install_then_user_friendly_error() {
 }
 
 #[test]
+fn given_directory_config_when_install_then_user_friendly_not_a_file_error() {
+    let test_repo = common::TestRepo::default();
+    let config_dir = test_repo.path.join("conf.toml");
+    fs::create_dir_all(&config_dir).expect("failed to create config directory");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&config_dir)
+        .arg("install")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(
+                "Error: The specified configuration path exists but is not a regular file",
+            )
+            .and(predicate::str::contains("NotAFile").not()),
+        );
+}
+
+#[test]
 fn given_invalid_config_when_install_then_validation_error_is_reported() {
     let test_repo = common::TestRepo::default();
     test_repo.write_config(
