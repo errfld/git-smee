@@ -154,6 +154,10 @@ fn is_default_config_path(config_path: &Path) -> bool {
 }
 
 fn normalize_config_path_for_hook_script(config_path: &Path) -> PathBuf {
+    if is_default_config_path(config_path) {
+        return config_path.to_path_buf();
+    }
+
     if config_path.is_absolute() {
         return config_path.to_path_buf();
     }

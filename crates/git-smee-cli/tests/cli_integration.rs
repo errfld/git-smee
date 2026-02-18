@@ -530,6 +530,26 @@ command = "echo custom"
 }
 
 #[test]
+fn given_default_config_when_installing_then_hook_script_keeps_portable_relative_path() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
+
+    #[cfg(windows)]
+    assert!(hook_content.contains("set \"GIT_SMEE_CONFIG=.git-smee.toml\""));
+}
+
+#[test]
 fn given_special_character_config_path_when_installing_then_hook_script_escapes_path() {
     let test_repo = common::TestRepo::default();
     let custom_config = test_repo.write_config_at(
