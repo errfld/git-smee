@@ -94,6 +94,26 @@ command = "echo bare"
 }
 
 #[test]
+fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_arguments() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("run pre-commit \"$@\""));
+
+    #[cfg(windows)]
+    assert!(hook_content.contains("run pre-commit %*"));
+}
+
+#[test]
 fn given_invalid_hook_when_run_then_user_friendly_error() {
     let test_repo = common::TestRepo::default();
 
@@ -475,6 +495,44 @@ command = "echo from-env-config"
         .arg("run")
         .arg("pre-commit")
         .env("GIT_SMEE_CONFIG", &env_config)
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn given_hook_args_when_running_then_command_receives_positional_args() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config(
+        r#"
+[[commit-msg]]
+command = "test \"$1\" = \"COMMIT_EDITMSG\""
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "COMMIT_EDITMSG"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn given_hook_args_when_running_then_command_receives_env_arg_contract() {
+    let test_repo = common::TestRepo::default();
+    let assertion_command = if cfg!(windows) {
+        "if \"%GIT_SMEE_HOOK_ARGC%\"==\"2\" (if \"%GIT_SMEE_HOOK_ARG_1%\"==\"alpha\" (if \"%GIT_SMEE_HOOK_ARG_2%\"==\"beta\" (exit /b 0) else (exit /b 1)) else (exit /b 1)) else (exit /b 1)"
+    } else {
+        "test \"$GIT_SMEE_HOOK_ARGC\" = \"2\" && test \"$GIT_SMEE_HOOK_ARG_1\" = \"alpha\" && test \"$GIT_SMEE_HOOK_ARG_2\" = \"beta\""
+    };
+
+    test_repo.write_config(&format!(
+        "[[commit-msg]]\ncommand = {assertion_command:?}\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "alpha", "beta"])
         .assert()
         .success();
 }

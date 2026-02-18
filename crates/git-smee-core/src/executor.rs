@@ -28,7 +28,15 @@ pub enum Error {
 }
 
 pub fn execute_hook(smee_config: &SmeeConfig, phase: LifeCyclePhase) -> Result<(), Error> {
-    execute_hook_with_platform(smee_config, phase, Platform::current())
+    execute_hook_with_args(smee_config, phase, &[])
+}
+
+pub fn execute_hook_with_args(
+    smee_config: &SmeeConfig,
+    phase: LifeCyclePhase,
+    hook_args: &[String],
+) -> Result<(), Error> {
+    execute_hook_with_platform_and_args(smee_config, phase, Platform::current(), hook_args)
 }
 
 pub fn execute_hook_with_platform(
@@ -36,25 +44,35 @@ pub fn execute_hook_with_platform(
     phase: LifeCyclePhase,
     platform: Platform,
 ) -> Result<(), Error> {
+    execute_hook_with_platform_and_args(smee_config, phase, platform, &[])
+}
+
+pub fn execute_hook_with_platform_and_args(
+    smee_config: &SmeeConfig,
+    phase: LifeCyclePhase,
+    platform: Platform,
+    hook_args: &[String],
+) -> Result<(), Error> {
     let runner = PlatformCommandRunner {
         platform: &platform,
     };
-    execute_hook_with_runner(smee_config, phase, &runner)
+    execute_hook_with_runner(smee_config, phase, &runner, hook_args)
 }
 
 fn execute_hook_with_runner<R: CommandRunner>(
     smee_config: &SmeeConfig,
     phase: LifeCyclePhase,
     runner: &R,
+    hook_args: &[String],
 ) -> Result<(), Error> {
     match smee_config.hooks.get(&phase) {
         None => Err(Error::NoHooksConfigured(phase)),
-        Some(hooks) => run_hooks_with_runner(hooks, runner),
+        Some(hooks) => run_hooks_with_runner(hooks, runner, hook_args),
     }
 }
 
 trait CommandRunner: Sync {
-    fn run(&self, command: &str) -> Result<Option<i32>, std::io::Error>;
+    fn run(&self, command: &str, hook_args: &[String]) -> Result<Option<i32>, std::io::Error>;
     fn shell_display(&self) -> &'static str;
 }
 
@@ -63,12 +81,21 @@ struct PlatformCommandRunner<'a> {
 }
 
 impl CommandRunner for PlatformCommandRunner<'_> {
-    fn run(&self, command: &str) -> Result<Option<i32>, std::io::Error> {
-        self.platform
-            .create_command()
-            .arg(command)
-            .status()
-            .map(|status| status.code())
+    fn run(&self, command: &str, hook_args: &[String]) -> Result<Option<i32>, std::io::Error> {
+        let mut shell_command = self.platform.create_command();
+        shell_command.arg(command);
+        shell_command.env("GIT_SMEE_HOOK_ARGC", hook_args.len().to_string());
+        for (index, arg) in hook_args.iter().enumerate() {
+            shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
+        }
+        match self.platform {
+            Platform::Unix => {
+                shell_command.arg("--");
+                shell_command.args(hook_args);
+            }
+            Platform::Windows => {}
+        }
+        shell_command.status().map(|status| status.code())
     }
 
     fn shell_display(&self) -> &'static str {
@@ -79,6 +106,7 @@ impl CommandRunner for PlatformCommandRunner<'_> {
 fn run_hooks_with_runner<R: CommandRunner>(
     hooks: &[HookDefinition],
     runner: &R,
+    hook_args: &[String],
 ) -> Result<(), Error> {
     let (parallel_hooks, sequential_hooks): (Vec<&HookDefinition>, Vec<&HookDefinition>) = (
         hooks
@@ -93,19 +121,23 @@ fn run_hooks_with_runner<R: CommandRunner>(
 
     sequential_hooks
         .iter()
-        .try_for_each(|&hook| execute_command(&hook.command, runner))?;
+        .try_for_each(|&hook| execute_command(&hook.command, runner, hook_args))?;
     parallel_hooks
         .par_iter()
-        .try_for_each(|&hook| execute_command(&hook.command, runner))?;
+        .try_for_each(|&hook| execute_command(&hook.command, runner, hook_args))?;
     Ok(())
 }
 
-fn execute_command(command: &str, runner: &impl CommandRunner) -> Result<(), Error> {
+fn execute_command(
+    command: &str,
+    runner: &impl CommandRunner,
+    hook_args: &[String],
+) -> Result<(), Error> {
     if command.trim().is_empty() {
         return Err(Error::NoCommandDefined);
     }
     let exit_code = runner
-        .run(command)
+        .run(command, hook_args)
         .map_err(|source| Error::CommandSpawnFailed {
             command: redact_command(command),
             shell: runner.shell_display().to_string(),
@@ -223,6 +255,7 @@ mod tests {
         outcomes_by_command: HashMap<String, VecDeque<PlannedResult>>,
         default_outcomes: VecDeque<PlannedResult>,
         calls: Vec<String>,
+        hook_args_calls: Vec<Vec<String>>,
     }
 
     struct FakeRunner {
@@ -257,12 +290,17 @@ mod tests {
         fn calls(&self) -> Vec<String> {
             self.state.lock().unwrap().calls.clone()
         }
+
+        fn hook_args_calls(&self) -> Vec<Vec<String>> {
+            self.state.lock().unwrap().hook_args_calls.clone()
+        }
     }
 
     impl CommandRunner for FakeRunner {
-        fn run(&self, command: &str) -> Result<Option<i32>, io::Error> {
+        fn run(&self, command: &str, hook_args: &[String]) -> Result<Option<i32>, io::Error> {
             let mut state = self.state.lock().unwrap();
             state.calls.push(command.to_string());
+            state.hook_args_calls.push(hook_args.to_vec());
             let outcome = state
                 .outcomes_by_command
                 .get_mut(command)
@@ -306,9 +344,31 @@ mod tests {
         let config = SmeeConfig { hooks: hooks_map };
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(0))]);
 
-        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
+        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner, &[]);
         assert!(result.is_ok());
         assert_eq!(runner.calls(), vec!["run-pre-commit"]);
+    }
+
+    #[test]
+    fn given_hook_args_when_executing_then_all_commands_receive_forwarded_args() {
+        let mut hooks_map = std::collections::HashMap::new();
+        hooks_map.insert(
+            LifeCyclePhase::CommitMsg,
+            vec![crate::config::HookDefinition {
+                command: "check-commit-message".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks: hooks_map };
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(0))]);
+        let hook_args = vec!["COMMIT_EDITMSG".to_string(), "message".to_string()];
+
+        let result =
+            execute_hook_with_runner(&config, LifeCyclePhase::CommitMsg, &runner, &hook_args);
+
+        assert!(result.is_ok());
+        assert_eq!(runner.calls(), vec!["check-commit-message"]);
+        assert_eq!(runner.hook_args_calls(), vec![hook_args]);
     }
 
     #[test]
@@ -324,7 +384,7 @@ mod tests {
         let config = SmeeConfig { hooks: hooks_map };
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(127))]);
 
-        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
+        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner, &[]);
         assert!(matches!(result, Err(Error::ExecutionFailed(127))));
     }
 
@@ -335,7 +395,7 @@ mod tests {
             io::ErrorKind::NotFound,
         )]);
 
-        let result = execute_command("deploy --token super-secret-value", &runner);
+        let result = execute_command("deploy --token super-secret-value", &runner, &[]);
 
         match result {
             Err(Error::CommandSpawnFailed {
@@ -357,7 +417,11 @@ mod tests {
             io::ErrorKind::NotFound,
         )]);
 
-        let result = execute_command("TOKEN=super-secret API_KEY=123 deploy --arg value", &runner);
+        let result = execute_command(
+            "TOKEN=super-secret API_KEY=123 deploy --arg value",
+            &runner,
+            &[],
+        );
 
         match result {
             Err(Error::CommandSpawnFailed { command, shell, .. }) => {
@@ -379,6 +443,7 @@ mod tests {
         let result = execute_command(
             "TOKEN=\"super secret\" API_KEY='another secret' ./deploy --arg value",
             &runner,
+            &[],
         );
 
         match result {
@@ -411,14 +476,14 @@ mod tests {
     #[test]
     fn given_empty_command_when_executing_then_no_command_defined_error() {
         let runner = FakeRunner::with_default_outcomes(vec![]);
-        let result = execute_command("   ", &runner);
+        let result = execute_command("   ", &runner, &[]);
         assert!(matches!(result, Err(Error::NoCommandDefined)));
     }
 
     #[test]
     fn given_missing_exit_code_when_executing_then_terminated_by_signal_error() {
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(None)]);
-        let result = execute_command("run-hook", &runner);
+        let result = execute_command("run-hook", &runner, &[]);
         assert!(matches!(result, Err(Error::ExecutionTerminatedBySignal)));
     }
 
@@ -443,7 +508,7 @@ mod tests {
             ("parallel-4", vec![PlannedResult::Exit(Some(0))]),
         ]);
 
-        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
+        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner, &[]);
 
         assert!(result.is_ok());
         let mut calls = runner.calls();
@@ -488,7 +553,7 @@ mod tests {
             ("parallel-3", vec![PlannedResult::Exit(Some(0))]),
         ]);
 
-        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner);
+        let result = execute_hook_with_runner(&config, LifeCyclePhase::PreCommit, &runner, &[]);
         let calls = runner.calls();
 
         assert!(result.is_ok());
@@ -525,7 +590,7 @@ mod tests {
             ("parallel", vec![PlannedResult::Exit(Some(0))]),
         ]);
 
-        let result = run_hooks_with_runner(&hooks, &runner);
+        let result = run_hooks_with_runner(&hooks, &runner, &[]);
 
         assert!(matches!(result, Err(Error::ExecutionFailed(10))));
         assert_eq!(runner.calls(), vec!["sequential"]);
@@ -553,7 +618,7 @@ mod tests {
             ("parallel-fail", vec![PlannedResult::Exit(Some(23))]),
         ]);
 
-        let result = run_hooks_with_runner(&hooks, &runner);
+        let result = run_hooks_with_runner(&hooks, &runner, &[]);
         let calls = runner.calls();
 
         assert!(matches!(result, Err(Error::ExecutionFailed(23))));
