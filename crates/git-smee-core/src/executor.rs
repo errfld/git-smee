@@ -236,7 +236,7 @@ mod tests {
     use std::{
         collections::{HashMap, VecDeque},
         io,
-        sync::Mutex,
+        sync::{Arc, Barrier, Mutex},
     };
 
     use assert2::assert;
@@ -248,6 +248,7 @@ mod tests {
     enum PlannedResult {
         Exit(Option<i32>),
         SpawnError(io::ErrorKind),
+        Barrier(Arc<Barrier>, Option<i32>),
     }
 
     #[derive(Default)]
@@ -298,18 +299,24 @@ mod tests {
 
     impl CommandRunner for FakeRunner {
         fn run(&self, command: &str, hook_args: &[String]) -> Result<Option<i32>, io::Error> {
-            let mut state = self.state.lock().unwrap();
-            state.calls.push(command.to_string());
-            state.hook_args_calls.push(hook_args.to_vec());
-            let outcome = state
-                .outcomes_by_command
-                .get_mut(command)
-                .and_then(VecDeque::pop_front)
-                .or_else(|| state.default_outcomes.pop_front())
-                .unwrap_or_else(|| panic!("no fake outcome configured for command '{command}'"));
+            let outcome = {
+                let mut state = self.state.lock().unwrap();
+                state.calls.push(command.to_string());
+                state.hook_args_calls.push(hook_args.to_vec());
+                state
+                    .outcomes_by_command
+                    .get_mut(command)
+                    .and_then(VecDeque::pop_front)
+                    .or_else(|| state.default_outcomes.pop_front())
+                    .unwrap_or_else(|| panic!("no fake outcome configured for command '{command}'"))
+            };
             match outcome {
                 PlannedResult::Exit(code) => Ok(code),
                 PlannedResult::SpawnError(kind) => Err(io::Error::new(kind, "spawn failed")),
+                PlannedResult::Barrier(barrier, code) => {
+                    barrier.wait();
+                    Ok(code)
+                }
             }
         }
 
@@ -597,7 +604,8 @@ mod tests {
     }
 
     #[test]
-    fn given_failed_parallel_hook_when_executing_then_error_is_propagated() {
+    fn given_failed_parallel_hook_when_executing_then_in_flight_parallel_hooks_may_complete() {
+        let barrier = Arc::new(Barrier::new(2));
         let hooks = vec![
             HookDefinition {
                 command: "sequential".to_string(),
@@ -614,15 +622,26 @@ mod tests {
         ];
         let runner = FakeRunner::with_command_outcomes(vec![
             ("sequential", vec![PlannedResult::Exit(Some(0))]),
-            ("parallel-ok", vec![PlannedResult::Exit(Some(0))]),
-            ("parallel-fail", vec![PlannedResult::Exit(Some(23))]),
+            (
+                "parallel-ok",
+                vec![PlannedResult::Barrier(barrier.clone(), Some(0))],
+            ),
+            (
+                "parallel-fail",
+                vec![PlannedResult::Barrier(barrier.clone(), Some(23))],
+            ),
         ]);
 
-        let result = run_hooks_with_runner(&hooks, &runner, &[]);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .expect("test thread pool should build");
+        let result = pool.install(|| run_hooks_with_runner(&hooks, &runner, &[]));
         let calls = runner.calls();
 
         assert!(matches!(result, Err(Error::ExecutionFailed(23))));
         assert_eq!(calls[0], "sequential");
+        assert!(calls.iter().any(|call| call == "parallel-ok"));
         assert!(calls.iter().any(|call| call == "parallel-fail"));
     }
 }
