@@ -51,12 +51,20 @@ pub enum Error {
 /// assert!(repo_root.join(".git").exists());
 /// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
-    let mut current = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
+    let current = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
+    find_git_root_from(&current, None)
+}
 
+fn find_git_root_from(start: &Path, stop_at: Option<&Path>) -> Result<PathBuf, Error> {
+    let mut current = start.to_path_buf();
     loop {
         let git_dir = current.join(".git");
         if git_dir.exists() {
             return Ok(current);
+        }
+
+        if stop_at.is_some_and(|limit| current == limit) {
+            return Err(Error::NotInGitRepository);
         }
 
         if !current.pop() {
@@ -217,17 +225,13 @@ mod tests {
 
     #[test]
     fn given_not_in_git_repo_when_finding_root_then_returns_error() {
-        // Note: This test is challenging because walking up from /tmp may eventually find
-        // a system git repo. We test the error path implicitly by verifying that
-        // find_git_root successfully finds .git when it exists in all the positive test cases.
-        // The actual error case would occur if we were in a directory with no .git
-        // anywhere in its ancestors up to the filesystem root.
-        // This is difficult to test in a typical development environment.
-        // We verify the error type exists and is properly defined in other tests.
-        assert!(matches!(
-            Err::<(), Error>(Error::NotInGitRepository),
-            Err(Error::NotInGitRepository)
-        ));
+        let temp_dir = TempDir::new().unwrap();
+        let nested = temp_dir.path().join("a").join("b").join("c");
+        fs::create_dir_all(&nested).unwrap();
+
+        let result = find_git_root_from(&nested, Some(temp_dir.path()));
+
+        assert!(matches!(result, Err(Error::NotInGitRepository)));
     }
 
     #[test]
