@@ -53,7 +53,8 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let config_path = resolve_config_path(cli.config);
+    let invocation_dir = env::current_dir()?;
+    let config_path = resolve_config_path(cli.config, &invocation_dir);
 
     match cli.command {
         Command::Install { force } => {
@@ -96,16 +97,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn resolve_config_path(cli_config: Option<PathBuf>) -> PathBuf {
+fn resolve_config_path(cli_config: Option<PathBuf>, invocation_dir: &Path) -> PathBuf {
     if let Some(path) = cli_config {
-        return expand_user_home_path(path);
+        return normalize_user_config_path(path, invocation_dir);
     }
     if let Ok(path_from_env) = env::var("GIT_SMEE_CONFIG")
         && !path_from_env.trim().is_empty()
     {
-        return expand_user_home_path(PathBuf::from(path_from_env));
+        return normalize_user_config_path(PathBuf::from(path_from_env), invocation_dir);
     }
     PathBuf::from_str(DEFAULT_CONFIG_FILE_NAME).expect("default config path should be valid")
+}
+
+fn normalize_user_config_path(path: PathBuf, invocation_dir: &Path) -> PathBuf {
+    let expanded = expand_user_home_path(path);
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        invocation_dir.join(expanded)
+    }
 }
 
 #[cfg(unix)]

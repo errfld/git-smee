@@ -268,6 +268,44 @@ command = "echo custom"
 }
 
 #[test]
+fn given_relative_config_flag_from_subdir_when_installing_then_cli_resolves_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    let nested_dir = test_repo.path.join("nested");
+    fs::create_dir_all(&nested_dir).expect("failed to create nested invocation dir");
+    let _root_config = test_repo.write_config_at(
+        "configs/custom.toml",
+        r#"
+[[pre-push]]
+command = "echo from-root-config"
+"#,
+    );
+    let invocation_config = test_repo.write_config_at(
+        "nested/configs/custom.toml",
+        r#"
+[[pre-commit]]
+command = "echo from-invocation-config"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&nested_dir)
+        .arg("--config")
+        .arg("configs/custom.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    assert!(test_repo.path.join(".git/hooks/pre-commit").exists());
+    assert!(!test_repo.path.join(".git/hooks/pre-push").exists());
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+    let wrong_config_path = test_repo.path.join("configs/custom.toml");
+    assert!(hook_content.contains(invocation_config.to_string_lossy().as_ref()));
+    assert!(!hook_content.contains(wrong_config_path.to_string_lossy().as_ref()));
+}
+
+#[test]
 fn given_git_smee_config_env_when_installing_then_cli_uses_env_config() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
