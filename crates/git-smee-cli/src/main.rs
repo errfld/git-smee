@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -89,7 +89,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if is_default_config_path(&config_path) {
                 installer.install_config_file(&default_config)?;
             } else {
-                write_config_file(&config_path, &default_config, force)?;
+                installer::write_config_file(&config_path, &default_config, force)?;
             }
             Ok(())
         }
@@ -129,24 +129,6 @@ fn expand_user_home_path(path: PathBuf) -> PathBuf {
 
 fn read_config_file(config_path: &Path) -> Result<SmeeConfig, config::Error> {
     config::SmeeConfig::try_from(config_path)
-}
-
-fn write_config_file(config_path: &Path, content: &str, force: bool) -> Result<(), std::io::Error> {
-    if config_path.exists() && !force {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            format!(
-                "Refusing to overwrite existing config file '{}'. Re-run with --force to overwrite.",
-                config_path.display()
-            ),
-        ));
-    }
-    if let Some(parent) = config_path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(config_path, content)
 }
 
 fn is_default_config_path(config_path: &Path) -> bool {

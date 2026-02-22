@@ -568,3 +568,76 @@ fn given_custom_config_path_when_initializing_then_init_writes_requested_file() 
     assert!(custom_config_path.exists());
     assert!(!test_repo.config_path().exists());
 }
+
+#[test]
+fn given_managed_custom_config_when_init_without_force_then_it_refuses_to_overwrite() {
+    let test_repo = common::TestRepo::default();
+    let managed_custom = test_repo.write_config_at(
+        "configs/managed-init.toml",
+        &format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo managed custom\"\n"),
+    );
+    let original = fs::read_to_string(&managed_custom).expect("failed to read original config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&managed_custom)
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Refusing to overwrite existing managed config file")
+                .and(predicate::str::contains("RefusingToOverwriteManagedConfigFile").not()),
+        );
+
+    let after = fs::read_to_string(&managed_custom).expect("failed to read config after init");
+    assert_eq!(after, original);
+}
+
+#[test]
+fn given_unmanaged_custom_config_when_init_without_force_then_it_refuses_to_overwrite() {
+    let test_repo = common::TestRepo::default();
+    let unmanaged_custom = test_repo.write_config_at(
+        "configs/unmanaged-init.toml",
+        "[[pre-commit]]\ncommand = \"echo unmanaged custom\"\n",
+    );
+    let original = fs::read_to_string(&unmanaged_custom).expect("failed to read original config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&unmanaged_custom)
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Refusing to overwrite existing unmanaged config file")
+                .and(predicate::str::contains("RefusingToOverwriteUnmanagedConfigFile").not()),
+        );
+
+    let after = fs::read_to_string(&unmanaged_custom).expect("failed to read config after init");
+    assert_eq!(after, original);
+}
+
+#[test]
+fn given_managed_custom_config_when_init_with_force_then_it_overwrites_config() {
+    let test_repo = common::TestRepo::default();
+    let managed_custom = test_repo.write_config_at(
+        "configs/managed-force-init.toml",
+        &format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo stale managed\"\n"),
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&managed_custom)
+        .arg("init")
+        .arg("--force")
+        .assert()
+        .success();
+
+    let initialized =
+        fs::read_to_string(managed_custom).expect("failed to read initialized config");
+    assert!(initialized.contains(MANAGED_FILE_MARKER));
+    assert!(initialized.contains("Default pre-commit hook"));
+}
