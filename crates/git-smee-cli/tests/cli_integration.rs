@@ -328,6 +328,44 @@ command = "echo env"
     assert!(!test_repo.path.join(".git/hooks/pre-commit").exists());
 }
 
+#[test]
+fn given_relative_config_env_from_subdir_when_installing_then_cli_resolves_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let nested_dir = test_repo.path.join("nested");
+    fs::create_dir_all(&nested_dir).expect("failed to create nested invocation dir");
+    let _root_config = test_repo.write_config_at(
+        "configs/env-config.toml",
+        r#"
+[[pre-commit]]
+command = "echo from-root-config"
+"#,
+    );
+    let invocation_config = test_repo.write_config_at(
+        "nested/configs/env-config.toml",
+        r#"
+[[pre-push]]
+command = "echo from-invocation-config"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&nested_dir)
+        .arg("install")
+        .env("GIT_SMEE_CONFIG", "configs/env-config.toml")
+        .assert()
+        .success();
+
+    assert!(test_repo.path.join(".git/hooks/pre-push").exists());
+    assert!(!test_repo.path.join(".git/hooks/pre-commit").exists());
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-push")).expect("missing hook");
+    let wrong_config_path = test_repo.path.join("configs/env-config.toml");
+    assert!(hook_content.contains(invocation_config.to_string_lossy().as_ref()));
+    assert!(!hook_content.contains(wrong_config_path.to_string_lossy().as_ref()));
+}
+
 #[cfg(unix)]
 #[test]
 fn given_tilde_config_flag_when_installing_then_cli_expands_home_path_for_hook_script() {
@@ -470,6 +508,67 @@ command = "echo from-env-config"
         .arg("run")
         .arg("pre-commit")
         .env("GIT_SMEE_CONFIG", &env_config)
+        .assert()
+        .success();
+}
+
+#[test]
+fn given_relative_config_flag_from_subdir_when_running_then_cli_resolves_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let nested_dir = test_repo.path.join("nested");
+    fs::create_dir_all(&nested_dir).expect("failed to create nested invocation dir");
+    let _root_config = test_repo.write_config_at(
+        "configs/run-custom.toml",
+        r#"
+[[pre-commit]]
+command = "   "
+"#,
+    );
+    let _invocation_config = test_repo.write_config_at(
+        "nested/configs/run-custom.toml",
+        r#"
+[[pre-commit]]
+command = "echo from-invocation-config"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&nested_dir)
+        .arg("--config")
+        .arg("configs/run-custom.toml")
+        .arg("run")
+        .arg("pre-commit")
+        .assert()
+        .success();
+}
+
+#[test]
+fn given_relative_config_env_from_subdir_when_running_then_cli_resolves_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let nested_dir = test_repo.path.join("nested");
+    fs::create_dir_all(&nested_dir).expect("failed to create nested invocation dir");
+    let _root_config = test_repo.write_config_at(
+        "configs/run-env.toml",
+        r#"
+[[pre-commit]]
+command = "   "
+"#,
+    );
+    let _invocation_config = test_repo.write_config_at(
+        "nested/configs/run-env.toml",
+        r#"
+[[pre-commit]]
+command = "echo from-invocation-env-config"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&nested_dir)
+        .arg("run")
+        .arg("pre-commit")
+        .env("GIT_SMEE_CONFIG", "configs/run-env.toml")
         .assert()
         .success();
 }
