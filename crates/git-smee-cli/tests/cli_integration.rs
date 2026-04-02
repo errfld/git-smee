@@ -72,6 +72,48 @@ fn given_git_smee_when_install_then_hooks_are_present() {
 }
 
 #[test]
+fn given_bare_repo_when_install_then_hooks_are_present() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    fs::write(
+        bare_repo.path().join(".git-smee.toml"),
+        r#"
+[[pre-receive]]
+command = "echo bare"
+"#,
+    )
+    .expect("failed to write config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .arg("install")
+        .assert()
+        .success();
+
+    assert!(bare_repo.path().join("hooks").join("pre-receive").exists());
+}
+
+#[test]
+fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_arguments() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("run pre-commit \"$@\""));
+
+    #[cfg(windows)]
+    assert!(hook_content.contains("run pre-commit %*"));
+}
+
+#[test]
 fn given_invalid_hook_when_run_then_user_friendly_error() {
     let test_repo = common::TestRepo::default();
 
@@ -99,6 +141,27 @@ fn given_missing_config_when_install_then_user_friendly_error() {
         .stderr(
             predicate::str::contains("Error: The specified configuration file is missing")
                 .and(predicate::str::contains("MissingFile").not()),
+        );
+}
+
+#[test]
+fn given_directory_config_when_install_then_user_friendly_not_a_file_error() {
+    let test_repo = common::TestRepo::default();
+    let config_dir = test_repo.path.join("conf.toml");
+    fs::create_dir_all(&config_dir).expect("failed to create config directory");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&config_dir)
+        .arg("install")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(
+                "Error: The specified configuration path exists but is not a regular file",
+            )
+            .and(predicate::str::contains("NotAFile").not()),
         );
 }
 
@@ -436,6 +499,44 @@ command = "echo from-env-config"
         .success();
 }
 
+#[cfg(unix)]
+#[test]
+fn given_hook_args_when_running_then_command_receives_positional_args() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config(
+        r#"
+[[commit-msg]]
+command = "test \"$1\" = \"COMMIT_EDITMSG\""
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "COMMIT_EDITMSG"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn given_hook_args_when_running_then_command_receives_env_arg_contract() {
+    let test_repo = common::TestRepo::default();
+    let assertion_command = if cfg!(windows) {
+        "if \"%GIT_SMEE_HOOK_ARGC%\"==\"2\" (if \"%GIT_SMEE_HOOK_ARG_1%\"==\"alpha\" (if \"%GIT_SMEE_HOOK_ARG_2%\"==\"beta\" (exit /b 0) else (exit /b 1)) else (exit /b 1)) else (exit /b 1)"
+    } else {
+        "test \"$GIT_SMEE_HOOK_ARGC\" = \"2\" && test \"$GIT_SMEE_HOOK_ARG_1\" = \"alpha\" && test \"$GIT_SMEE_HOOK_ARG_2\" = \"beta\""
+    };
+
+    test_repo.write_config(&format!(
+        "[[commit-msg]]\ncommand = {assertion_command:?}\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "alpha", "beta"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn given_failing_hook_when_running_then_cli_surfaces_non_zero_exit_code() {
     let test_repo = common::TestRepo::default();
@@ -456,6 +557,26 @@ command = "exit 1"
             predicate::str::contains("Error: Hook execution failed with exit code")
                 .and(predicate::str::contains("ExecutionFailed").not()),
         );
+}
+
+#[test]
+fn given_bare_repo_when_running_then_hook_executes() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    fs::write(
+        bare_repo.path().join(".git-smee.toml"),
+        r#"
+[[pre-receive]]
+command = "echo bare-run"
+"#,
+    )
+    .expect("failed to write config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .args(["run", "pre-receive"])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -485,6 +606,26 @@ command = "echo custom"
     assert!(hook_content.contains("--config"));
     assert!(hook_content.contains(expected_executable.to_string_lossy().as_ref()));
     assert!(hook_content.contains(expected_config_path.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn given_default_config_when_installing_then_hook_script_keeps_portable_relative_path() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
+
+    #[cfg(windows)]
+    assert!(hook_content.contains("set \"GIT_SMEE_CONFIG=.git-smee.toml\""));
 }
 
 #[test]
@@ -567,4 +708,18 @@ fn given_custom_config_path_when_initializing_then_init_writes_requested_file() 
 
     assert!(custom_config_path.exists());
     assert!(!test_repo.config_path().exists());
+}
+
+#[test]
+fn given_bare_repo_when_initializing_then_init_writes_default_config() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(bare_repo.path().join(".git-smee.toml").exists());
 }
