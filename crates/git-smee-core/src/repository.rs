@@ -10,6 +10,8 @@ use thiserror::Error;
 pub enum Error {
     #[error("Not in a git repository")]
     NotInGitRepository,
+    #[error("Failed to read current directory: {0}")]
+    FailedToReadCurrentDirectory(std::io::Error),
     #[error("Failed to change directory: {0}")]
     FailedToChangeDirectory(#[from] std::io::Error),
     #[error("Failed to execute git: {0}")]
@@ -70,7 +72,7 @@ pub enum Error {
 /// assert_eq!(normalize(&repo_root), normalize(temp_dir.path()));
 /// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
-    let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
+    let current_dir = env::current_dir().map_err(Error::FailedToReadCurrentDirectory)?;
 
     if git_rev_parse_bool("--is-inside-work-tree")?
         && let Some(root) = git_rev_parse_path("--show-toplevel")?
