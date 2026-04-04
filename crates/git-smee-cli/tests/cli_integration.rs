@@ -687,9 +687,10 @@ fn given_default_config_when_installing_then_hook_script_keeps_portable_relative
     {
         let normalized_hook_content = hook_content.replace('\\', "/");
         assert!(normalized_hook_content.contains(".git-smee.toml"));
-        assert!(!normalized_hook_content.contains(
-            &test_repo.config_path().to_string_lossy().replace('\\', "/"),
-        ));
+        assert!(
+            !normalized_hook_content
+                .contains(&test_repo.config_path().to_string_lossy().replace('\\', "/"),)
+        );
     }
 }
 
@@ -715,9 +716,10 @@ fn given_default_config_alias_when_installing_then_hook_script_keeps_portable_re
     {
         let normalized_hook_content = hook_content.replace('\\', "/");
         assert!(normalized_hook_content.contains(".git-smee.toml"));
-        assert!(!normalized_hook_content.contains(
-            &test_repo.config_path().to_string_lossy().replace('\\', "/"),
-        ));
+        assert!(
+            !normalized_hook_content
+                .contains(&test_repo.config_path().to_string_lossy().replace('\\', "/"),)
+        );
     }
 }
 
