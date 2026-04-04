@@ -152,7 +152,11 @@ fn read_config_file(config_path: &Path) -> Result<SmeeConfig, config::Error> {
     config::SmeeConfig::try_from(config_path)
 }
 
-fn write_config_file(config_path: &Path, content: &str, force: bool) -> Result<(), installer::Error> {
+fn write_config_file(
+    config_path: &Path,
+    content: &str,
+    force: bool,
+) -> Result<(), installer::Error> {
     installer::FileSystemHookInstaller::ensure_can_write_managed_config(config_path, force)?;
     if let Some(parent) = config_path.parent()
         && !parent.as_os_str().is_empty()
