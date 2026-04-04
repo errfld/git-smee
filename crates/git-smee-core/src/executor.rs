@@ -116,7 +116,7 @@ fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[St
 
 fn is_hook_arg_env_key(key: &str) -> bool {
     key.len() >= "GIT_SMEE_HOOK_ARG".len()
-        && key[.. "GIT_SMEE_HOOK_ARG".len()].eq_ignore_ascii_case("GIT_SMEE_HOOK_ARG")
+        && key[.."GIT_SMEE_HOOK_ARG".len()].eq_ignore_ascii_case("GIT_SMEE_HOOK_ARG")
 }
 
 fn run_hooks_with_runner<R: CommandRunner>(
@@ -409,9 +409,10 @@ mod tests {
             .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
             .collect();
 
-        assert!(envs
-            .iter()
-            .any(|(key, value)| key == "Git_Smee_Hook_Arg_2" && value.is_none()));
+        assert!(
+            envs.iter()
+                .any(|(key, value)| key == "Git_Smee_Hook_Arg_2" && value.is_none())
+        );
         assert!(envs.iter().any(|(key, value)| {
             key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("2"))
         }));
