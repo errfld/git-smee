@@ -33,7 +33,11 @@ enum Command {
         force: bool,
     },
     #[command(name = "run", about = "Run a specific git hook")]
-    Run { hook: String },
+    Run {
+        hook: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        hook_args: Vec<String>,
+    },
     #[command(
         name = "init",
         about = "Initialize a .git-smee.toml configuration file"
@@ -68,12 +72,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("Hooks installed successfully.");
             Ok(())
         }
-        Command::Run { hook } => {
+        Command::Run { hook, hook_args } => {
             repository::ensure_in_repo_root()?;
             println!("Running hook: {hook}");
             let config = read_config_file(&config_path)?;
             let phase = config::LifeCyclePhase::from_str(&hook)?;
-            executor::execute_hook(&config, phase)?;
+            executor::execute_hook_with_args(&config, phase, &hook_args)?;
             Ok(())
         }
         Command::Initialize { force } => {
@@ -136,6 +140,10 @@ fn is_default_config_path(config_path: &Path) -> bool {
 }
 
 fn normalize_config_path_for_hook_script(config_path: &Path) -> PathBuf {
+    if is_default_config_path(config_path) {
+        return config_path.to_path_buf();
+    }
+
     if config_path.is_absolute() {
         return config_path.to_path_buf();
     }

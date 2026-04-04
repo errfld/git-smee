@@ -50,8 +50,11 @@ impl SmeeConfig {
     /// ```
     ///
     pub fn from_toml(path: &Path) -> Result<Self, Error> {
-        if !path.exists() || !path.is_file() {
+        if !path.exists() {
             return Err(Error::MissingFile);
+        }
+        if !path.is_file() {
+            return Err(Error::NotAFile);
         }
         let ext = path.extension().ok_or(Error::CanNotReadExtension)?;
         if !ext.eq_ignore_ascii_case(OsStr::new("toml")) {
@@ -219,6 +222,8 @@ impl fmt::Display for LifeCyclePhase {
 pub enum Error {
     #[error("The specified configuration file is missing")]
     MissingFile,
+    #[error("The specified configuration path exists but is not a regular file")]
+    NotAFile,
     #[error("The specified configuration file does not have a readable extension")]
     CanNotReadExtension,
     #[error("The specified configuration file does not have a .toml extension")]
