@@ -300,9 +300,12 @@ command = "echo from-invocation-config"
 
     let hook_content =
         fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+    let normalized_hook_content = hook_content.replace('\\', "/");
     let wrong_config_path = test_repo.path.join("configs/custom.toml");
-    assert!(hook_content.contains(invocation_config.to_string_lossy().as_ref()));
-    assert!(!hook_content.contains(wrong_config_path.to_string_lossy().as_ref()));
+    let expected_config_path = invocation_config.to_string_lossy().replace('\\', "/");
+    let unexpected_config_path = wrong_config_path.to_string_lossy().replace('\\', "/");
+    assert!(normalized_hook_content.contains(&expected_config_path));
+    assert!(!normalized_hook_content.contains(&unexpected_config_path));
 }
 
 #[test]
@@ -361,9 +364,12 @@ command = "echo from-invocation-config"
 
     let hook_content =
         fs::read_to_string(test_repo.path.join(".git/hooks/pre-push")).expect("missing hook");
+    let normalized_hook_content = hook_content.replace('\\', "/");
     let wrong_config_path = test_repo.path.join("configs/env-config.toml");
-    assert!(hook_content.contains(invocation_config.to_string_lossy().as_ref()));
-    assert!(!hook_content.contains(wrong_config_path.to_string_lossy().as_ref()));
+    let expected_config_path = invocation_config.to_string_lossy().replace('\\', "/");
+    let unexpected_config_path = wrong_config_path.to_string_lossy().replace('\\', "/");
+    assert!(normalized_hook_content.contains(&expected_config_path));
+    assert!(!normalized_hook_content.contains(&unexpected_config_path));
 }
 
 #[cfg(unix)]
