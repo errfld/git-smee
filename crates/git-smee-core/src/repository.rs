@@ -74,7 +74,12 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
     let git_state = git_rev_parse_state()?;
 
     if !git_state.inside_git_dir {
-        let root = current_dir.join(git_state.show_cdup.as_deref().unwrap_or_else(|| Path::new(".")));
+        let root = current_dir.join(
+            git_state
+                .show_cdup
+                .as_deref()
+                .unwrap_or_else(|| Path::new(".")),
+        );
         let canonical_root = root
             .canonicalize()
             .map_err(Error::FailedToChangeDirectory)?;
