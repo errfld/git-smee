@@ -71,100 +71,104 @@ pub enum Error {
 /// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
     let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
+    let git_state = git_rev_parse_state()?;
 
-    if git_rev_parse_bool("--is-inside-work-tree")?
-        && let Some(root) = git_rev_parse_path("--show-toplevel")?
-    {
+    if !git_state.inside_git_dir {
+        let root = current_dir.join(git_state.show_cdup.as_deref().unwrap_or_else(|| Path::new(".")));
         let canonical_root = root
             .canonicalize()
             .map_err(Error::FailedToChangeDirectory)?;
-        if !git_rev_parse_bool("--is-bare-repository")?
-            && canonical_root.file_name() == Some(OsStr::new(".git"))
-            && let Some(worktree_root) = canonical_root.parent()
-        {
-            return worktree_root
-                .canonicalize()
-                .map_err(Error::FailedToChangeDirectory);
-        }
         return Ok(canonical_root);
     }
 
-    if git_rev_parse_bool("--is-inside-git-dir")?
-        && let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")?
+    let Some(git_dir) = git_state.git_dir else {
+        return Err(Error::NotInGitRepository);
+    };
+    let resolved_git_dir = if git_dir.is_absolute() {
+        git_dir
+    } else {
+        current_dir.join(git_dir)
+    };
+    let canonical_git_dir = resolved_git_dir
+        .canonicalize()
+        .map_err(Error::FailedToChangeDirectory);
+
+    if git_state.bare_repository {
+        return canonical_git_dir;
+    }
+
+    let canonical_git_dir = canonical_git_dir?;
+    if canonical_git_dir.file_name() == Some(OsStr::new(".git"))
+        && let Some(worktree_root) = canonical_git_dir.parent()
     {
-        if git_rev_parse_bool("--is-bare-repository")? {
-            return git_dir
-                .canonicalize()
-                .map_err(Error::FailedToChangeDirectory);
-        }
-
-        if git_dir.file_name() == Some(OsStr::new(".git"))
-            && let Some(worktree_root) = git_dir.parent()
-        {
-            return worktree_root
-                .canonicalize()
-                .map_err(Error::FailedToChangeDirectory);
-        }
-
-        return git_dir
+        return worktree_root
             .canonicalize()
             .map_err(Error::FailedToChangeDirectory);
     }
 
-    if git_rev_parse_bool("--is-bare-repository")? {
-        if let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")? {
-            return git_dir
-                .canonicalize()
-                .map_err(Error::FailedToChangeDirectory);
-        }
-        return current_dir
-            .canonicalize()
-            .map_err(Error::FailedToChangeDirectory);
-    }
-
-    Err(Error::NotInGitRepository)
+    Ok(canonical_git_dir)
 }
 
-fn git_rev_parse_bool(flag: &str) -> Result<bool, Error> {
+struct GitRevParseState {
+    bare_repository: bool,
+    inside_git_dir: bool,
+    git_dir: Option<PathBuf>,
+    show_cdup: Option<PathBuf>,
+}
+
+fn git_rev_parse_state() -> Result<GitRevParseState, Error> {
+    const FLAGS: [&str; 4] = [
+        "--is-bare-repository",
+        "--is-inside-git-dir",
+        "--git-dir",
+        "--show-cdup",
+    ];
     let output = Command::new("git")
         .arg("rev-parse")
-        .arg(flag)
+        .args(FLAGS)
         .output()
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
         if is_not_in_repository_error(&output.stderr) {
-            return Ok(false);
+            return Err(Error::NotInGitRepository);
         }
         let stderr = stderr_or_status(&output.stderr, output.status.code());
         return Err(Error::FailedToQueryGitRevParse {
-            flag: flag.to_string(),
+            flag: FLAGS.join(" "),
             stderr,
         });
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+    let lines: Vec<&[u8]> = output.stdout.split(|byte| *byte == b'\n').collect();
+    if lines.len() < FLAGS.len() {
+        return Err(Error::FailedToQueryGitRevParse {
+            flag: FLAGS.join(" "),
+            stderr: "git rev-parse returned incomplete output".to_string(),
+        });
+    }
+
+    Ok(GitRevParseState {
+        bare_repository: parse_git_bool(FLAGS[0], lines[0])?,
+        inside_git_dir: parse_git_bool(FLAGS[1], lines[1])?,
+        git_dir: parse_git_path(FLAGS[2], lines[2])?,
+        show_cdup: parse_git_path(FLAGS[3], lines[3])?,
+    })
 }
 
-fn git_rev_parse_path(flag: &str) -> Result<Option<PathBuf>, Error> {
-    let output = Command::new("git")
-        .arg("rev-parse")
-        .arg(flag)
-        .output()
-        .map_err(Error::FailedToExecuteGit)?;
-
-    if !output.status.success() {
-        if is_not_in_repository_error(&output.stderr) {
-            return Ok(None);
-        }
-        let stderr = stderr_or_status(&output.stderr, output.status.code());
-        return Err(Error::FailedToQueryGitRevParse {
+fn parse_git_bool(flag: &str, bytes: &[u8]) -> Result<bool, Error> {
+    match String::from_utf8_lossy(trim_git_output_path(bytes)).trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(Error::FailedToQueryGitRevParse {
             flag: flag.to_string(),
-            stderr,
-        });
+            stderr: format!("unexpected boolean output: '{other}'"),
+        }),
     }
+}
 
-    let trimmed = trim_git_output_path(&output.stdout);
+fn parse_git_path(_flag: &str, bytes: &[u8]) -> Result<Option<PathBuf>, Error> {
+    let trimmed = trim_git_output_path(bytes);
     if trimmed.is_empty() {
         return Ok(None);
     }

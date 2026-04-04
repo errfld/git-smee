@@ -521,7 +521,19 @@ command = "test \"$1\" = \"COMMIT_EDITMSG\""
 fn given_hook_args_when_running_then_command_receives_env_arg_contract() {
     let test_repo = common::TestRepo::default();
     let assertion_command = if cfg!(windows) {
-        "if \"%GIT_SMEE_HOOK_ARGC%\"==\"2\" (if \"%GIT_SMEE_HOOK_ARG_1%\"==\"alpha\" (if \"%GIT_SMEE_HOOK_ARG_2%\"==\"beta\" (exit /b 0) else (exit /b 1)) else (exit /b 1)) else (exit /b 1)"
+        r#"if "%GIT_SMEE_HOOK_ARGC%"=="2" (
+  if "%GIT_SMEE_HOOK_ARG_1%"=="alpha" (
+    if "%GIT_SMEE_HOOK_ARG_2%"=="beta" (
+      exit /b 0
+    ) else (
+      exit /b 1
+    )
+  ) else (
+    exit /b 1
+  )
+) else (
+  exit /b 1
+)"#
     } else {
         "test \"$GIT_SMEE_HOOK_ARGC\" = \"2\" && test \"$GIT_SMEE_HOOK_ARG_1\" = \"alpha\" && test \"$GIT_SMEE_HOOK_ARG_2\" = \"beta\""
     };
