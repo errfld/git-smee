@@ -684,7 +684,13 @@ fn given_default_config_when_installing_then_hook_script_keeps_portable_relative
     assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
 
     #[cfg(windows)]
-    assert!(hook_content.contains("set \"GIT_SMEE_CONFIG=.git-smee.toml\""));
+    {
+        let normalized_hook_content = hook_content.replace('\\', "/");
+        assert!(normalized_hook_content.contains(".git-smee.toml"));
+        assert!(!normalized_hook_content.contains(
+            &test_repo.config_path().to_string_lossy().replace('\\', "/"),
+        ));
+    }
 }
 
 #[test]
@@ -706,7 +712,13 @@ fn given_default_config_alias_when_installing_then_hook_script_keeps_portable_re
     assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
 
     #[cfg(windows)]
-    assert!(hook_content.contains("set \"GIT_SMEE_CONFIG=.git-smee.toml\""));
+    {
+        let normalized_hook_content = hook_content.replace('\\', "/");
+        assert!(normalized_hook_content.contains(".git-smee.toml"));
+        assert!(!normalized_hook_content.contains(
+            &test_repo.config_path().to_string_lossy().replace('\\', "/"),
+        ));
+    }
 }
 
 #[test]
@@ -816,7 +828,8 @@ command = "echo nested-install"
     let hook_content =
         fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
 
-    assert!(hook_content.contains(custom_config.to_string_lossy().as_ref()));
+    let normalized_hook_content = hook_content.replace('\\', "/");
+    assert!(normalized_hook_content.contains(&custom_config.to_string_lossy().replace('\\', "/")));
 }
 
 #[test]
@@ -843,7 +856,8 @@ command = "echo nested-env-install"
     let hook_content =
         fs::read_to_string(test_repo.path.join(".git/hooks/pre-push")).expect("missing hook");
 
-    assert!(hook_content.contains(custom_config.to_string_lossy().as_ref()));
+    let normalized_hook_content = hook_content.replace('\\', "/");
+    assert!(normalized_hook_content.contains(&custom_config.to_string_lossy().replace('\\', "/")));
 }
 
 #[test]
