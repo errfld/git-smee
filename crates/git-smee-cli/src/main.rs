@@ -74,7 +74,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Run { hook, hook_args } => {
             repository::ensure_in_repo_root()?;
-            println!("Running hook: {hook}");
             let config = read_config_file(&config_path)?;
             let phase = config::LifeCyclePhase::from_str(&hook)?;
             executor::execute_hook_with_args(&config, phase, &hook_args)?;

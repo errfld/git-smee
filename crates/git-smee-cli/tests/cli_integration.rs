@@ -499,6 +499,27 @@ command = "echo from-env-config"
         .success();
 }
 
+#[test]
+fn given_successful_hook_when_running_then_cli_stdout_contains_only_hook_output() {
+    let test_repo = common::TestRepo::default();
+    let command = if cfg!(windows) {
+        "echo hook-output"
+    } else {
+        "printf 'hook-output\\n'"
+    };
+    test_repo.write_config(&format!("[[pre-commit]]\ncommand = {command:?}\n"));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-commit"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("hook-output")
+                .and(predicate::str::contains("Running hook:").not()),
+        );
+}
+
 #[cfg(unix)]
 #[test]
 fn given_hook_args_when_running_then_command_receives_positional_args() {
