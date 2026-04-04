@@ -538,6 +538,27 @@ fn given_hook_args_when_running_then_command_receives_env_arg_contract() {
 }
 
 #[test]
+fn given_inherited_hook_arg_env_when_running_then_stale_values_are_not_visible() {
+    let test_repo = common::TestRepo::default();
+    let assertion_command = if cfg!(windows) {
+        "if \"%GIT_SMEE_HOOK_ARGC%\"==\"1\" (if \"%GIT_SMEE_HOOK_ARG_1%\"==\"alpha\" (if defined GIT_SMEE_HOOK_ARG_2 (exit /b 1) else (exit /b 0)) else (exit /b 1)) else (exit /b 1)"
+    } else {
+        "test \"$GIT_SMEE_HOOK_ARGC\" = \"1\" && test \"$GIT_SMEE_HOOK_ARG_1\" = \"alpha\" && test -z \"${GIT_SMEE_HOOK_ARG_2+x}\""
+    };
+
+    test_repo.write_config(&format!(
+        "[[commit-msg]]\ncommand = {assertion_command:?}\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .env("GIT_SMEE_HOOK_ARG_2", "stale-parent-value")
+        .args(["run", "commit-msg", "alpha"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn given_failing_hook_when_running_then_cli_surfaces_non_zero_exit_code() {
     let test_repo = common::TestRepo::default();
     test_repo.write_config(

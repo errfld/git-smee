@@ -1,6 +1,7 @@
-use rayon::prelude::*;
+use std::env;
 
 use rayon::iter::IntoParallelRefIterator;
+use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -84,10 +85,7 @@ impl CommandRunner for PlatformCommandRunner<'_> {
     fn run(&self, command: &str, hook_args: &[String]) -> Result<Option<i32>, std::io::Error> {
         let mut shell_command = self.platform.create_command();
         shell_command.arg(command);
-        shell_command.env("GIT_SMEE_HOOK_ARGC", hook_args.len().to_string());
-        for (index, arg) in hook_args.iter().enumerate() {
-            shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
-        }
+        apply_hook_arg_env(&mut shell_command, hook_args);
         match self.platform {
             Platform::Unix => {
                 shell_command.arg("--");
@@ -100,6 +98,19 @@ impl CommandRunner for PlatformCommandRunner<'_> {
 
     fn shell_display(&self) -> &'static str {
         self.platform.shell_display()
+    }
+}
+
+fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[String]) {
+    for (key, _) in env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_SMEE_HOOK_ARG") {
+            shell_command.env_remove(key);
+        }
+    }
+
+    shell_command.env("GIT_SMEE_HOOK_ARGC", hook_args.len().to_string());
+    for (index, arg) in hook_args.iter().enumerate() {
+        shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
     }
 }
 
