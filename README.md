@@ -24,6 +24,8 @@ brew tap errfld/git-smee
 brew install git-smee
 ```
 
+The Homebrew tap currently publishes the Apple Silicon (`aarch64-apple-darwin`) release artifact.
+
 ### Cargo
 
 ```bash

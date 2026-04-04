@@ -36,9 +36,11 @@ jobs:
       - id: validate
         name: Validate release tag
         shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            raw_tag='${{ github.event.inputs.tag }}'
+            raw_tag="$INPUT_TAG"
             tag="$(printf '%s' "$raw_tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           else
             tag='${{ github.ref_name }}'
@@ -149,12 +151,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Update Homebrew Tap
+      - name: Update Homebrew Tap (Apple Silicon)
         uses: mislav/bump-homebrew-formula-action@ccf2332299a883f6af50a1d2d41e5df7904dd769 # v4.1
         with:
           homebrew-tap: errfld/homebrew-git-smee
           formula-name: git-smee
           tag-name: ${{ needs.prepare-release.outputs.tag }}
+          # This action can only bump a single URL field, so the tap remains
+          # Apple Silicon-specific until the formula moves to a multi-arch flow.
           download-url: https://github.com/errfld/git-smee/releases/download/${{ needs.prepare-release.outputs.tag }}/git-smee-${{ needs.prepare-release.outputs.tag }}-aarch64-apple-darwin.tar.gz
         env:
           COMMITTER_TOKEN: ${{ secrets.HOMEBREW_PAT }}

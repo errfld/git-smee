@@ -24,15 +24,15 @@ jobs:
         toolchain: [stable, beta, nightly]
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Install Rust (${{ matrix.toolchain }})
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9  # master
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
 
       - name: Build
         run: cargo build --workspace --all-targets --all-features --locked --verbose
@@ -241,5 +241,5 @@ jobs:
         run: |
           for attempt in 1 2 3 4 5; do
             echo "flake detection attempt $attempt"
-            cargo test -p git-smee-core --lib --locked --verbose repository::tests::
+            cargo test -p git-smee-core --lib --locked --verbose repository::tests:: -- --test-threads=1
           done
