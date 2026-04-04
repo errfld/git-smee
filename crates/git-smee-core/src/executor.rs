@@ -103,7 +103,7 @@ impl CommandRunner for PlatformCommandRunner<'_> {
 
 fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[String]) {
     for (key, _) in env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_SMEE_HOOK_ARG") {
+        if is_hook_arg_env_key(&key.to_string_lossy()) {
             shell_command.env_remove(key);
         }
     }
@@ -112,6 +112,11 @@ fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[St
     for (index, arg) in hook_args.iter().enumerate() {
         shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
     }
+}
+
+fn is_hook_arg_env_key(key: &str) -> bool {
+    key.len() >= "GIT_SMEE_HOOK_ARG".len()
+        && key[.. "GIT_SMEE_HOOK_ARG".len()].eq_ignore_ascii_case("GIT_SMEE_HOOK_ARG")
 }
 
 fn run_hooks_with_runner<R: CommandRunner>(
@@ -246,7 +251,9 @@ fn tokenize_command(command: &str) -> Vec<String> {
 mod tests {
     use std::{
         collections::{HashMap, VecDeque},
+        ffi::OsString,
         io,
+        process::Command,
         sync::Mutex,
     };
 
@@ -255,6 +262,8 @@ mod tests {
     use crate::config::HookDefinition;
 
     use super::*;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     enum PlannedResult {
         Exit(Option<i32>),
@@ -380,6 +389,63 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(runner.calls(), vec!["check-commit-message"]);
         assert_eq!(runner.hook_args_calls(), vec![hook_args]);
+    }
+
+    #[test]
+    fn given_mixed_case_hook_arg_env_when_applying_then_existing_entries_are_removed() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::set_var("Git_Smee_Hook_Arg_2", "stale");
+            env::set_var("GIT_SMEE_HOOK_ARGC", "7");
+        }
+
+        let mut command = Command::new("echo");
+        let hook_args = vec!["alpha".to_string(), "beta".to_string()];
+        apply_hook_arg_env(&mut command, &hook_args);
+
+        let envs: Vec<(OsString, Option<OsString>)> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
+            .collect();
+
+        assert!(envs
+            .iter()
+            .any(|(key, value)| key == "Git_Smee_Hook_Arg_2" && value.is_none()));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("2"))
+        }));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARG_1" && value.as_ref() == Some(&OsString::from("alpha"))
+        }));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARG_2" && value.as_ref() == Some(&OsString::from("beta"))
+        }));
+
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::remove_var("Git_Smee_Hook_Arg_2");
+            env::remove_var("GIT_SMEE_HOOK_ARGC");
+        }
+    }
+
+    #[test]
+    fn given_empty_hook_args_when_applying_then_argc_is_zero_and_no_indexed_args_are_added() {
+        let mut command = Command::new("echo");
+
+        apply_hook_arg_env(&mut command, &[]);
+
+        let envs: Vec<(OsString, Option<OsString>)> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
+            .collect();
+
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("0"))
+        }));
+        assert!(!envs.iter().any(|(key, _)| {
+            is_hook_arg_env_key(&key.to_string_lossy()) && key != "GIT_SMEE_HOOK_ARGC"
+        }));
     }
 
     #[test]
