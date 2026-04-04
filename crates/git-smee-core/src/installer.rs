@@ -257,6 +257,22 @@ impl FileSystemHookInstaller {
         &self.hooks_dir
     }
 
+    pub fn ensure_can_write_managed_config(
+        config_file: &Path,
+        force_overwrite: bool,
+    ) -> Result<(), Error> {
+        if !config_file.exists() || force_overwrite {
+            return Ok(());
+        }
+
+        let path = config_file.to_string_lossy().to_string();
+        if Self::is_managed_file(config_file)? {
+            return Err(Error::RefusingToOverwriteManagedConfigFile { path });
+        }
+
+        Err(Error::RefusingToOverwriteUnmanagedConfigFile { path })
+    }
+
     fn ensure_can_write_hook(&self, hook_file: &Path) -> Result<(), Error> {
         if !hook_file.exists() || self.force_overwrite {
             return Ok(());
@@ -272,16 +288,7 @@ impl FileSystemHookInstaller {
     }
 
     fn ensure_can_write_config(&self, config_file: &Path) -> Result<(), Error> {
-        if !config_file.exists() || self.force_overwrite {
-            return Ok(());
-        }
-
-        let path = config_file.to_string_lossy().to_string();
-        if Self::is_managed_file(config_file)? {
-            return Err(Error::RefusingToOverwriteManagedConfigFile { path });
-        }
-
-        Err(Error::RefusingToOverwriteUnmanagedConfigFile { path })
+        Self::ensure_can_write_managed_config(config_file, self.force_overwrite)
     }
 
     fn is_managed_file(path: &Path) -> Result<bool, Error> {
