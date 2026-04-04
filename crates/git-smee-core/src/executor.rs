@@ -409,10 +409,10 @@ mod tests {
             .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
             .collect();
 
-        assert!(
-            envs.iter()
-                .any(|(key, value)| key == "Git_Smee_Hook_Arg_2" && value.is_none())
-        );
+        assert!(!envs.iter().any(|(key, value)| {
+            is_hook_arg_env_key(&key.to_string_lossy())
+                && value.as_ref() == Some(&OsString::from("stale"))
+        }));
         assert!(envs.iter().any(|(key, value)| {
             key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("2"))
         }));
