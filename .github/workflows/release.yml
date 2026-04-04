@@ -12,67 +12,149 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
 
 jobs:
+  prepare-release:
+    name: Prepare release inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - id: validate
+        name: Validate release tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            raw_tag='${{ github.event.inputs.tag }}'
+            tag="$(printf '%s' "$raw_tag" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          else
+            tag='${{ github.ref_name }}'
+          fi
+
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+(\.[0-9]+)*([-.].*)?$'; then
+            echo "invalid release tag: '$tag'" >&2
+            exit 1
+          fi
+
+          if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "release tag '$tag' does not exist in this repository" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   build-and-release:
+    needs: prepare-release
     name: Build ${{ matrix.target }} binary
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive_ext: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-          ref: ${{ env.TAG }}
+          ref: ${{ needs.prepare-release.outputs.tag }}
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: stable
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Build release binary
-        run: cargo build --release -p git-smee-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p git-smee-cli --target ${{ matrix.target }}
 
-      - name: Prepare artifact
+      - id: package-unix
+        if: runner.os != 'Windows'
+        name: Prepare Unix artifact
+        shell: bash
         run: |
-          VERSION=${TAG}
+          VERSION='${{ needs.prepare-release.outputs.tag }}'
+          ASSET="git-smee-${VERSION}-${{ matrix.target }}.tar.gz"
           mkdir -p dist
           cp target/${{ matrix.target }}/release/git-smee dist/
-          tar -czf git-smee-${VERSION}-${{ matrix.target }}.${{ matrix.archive_ext }} -C dist git-smee
+          test -f dist/git-smee
+          tar -czf "$ASSET" -C dist git-smee
+          shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "checksum=$ASSET.sha256" >> "$GITHUB_OUTPUT"
 
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
+      - id: package-windows
+        if: runner.os == 'Windows'
+        name: Prepare Windows artifact
+        shell: pwsh
+        run: |
+          $version = '${{ needs.prepare-release.outputs.tag }}'
+          $asset = "git-smee-$version-${{ matrix.target }}.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/git-smee.exe" "dist/git-smee.exe"
+          if (-not (Test-Path "dist/git-smee.exe")) {
+            throw "missing git-smee.exe"
+          }
+          Compress-Archive -Path "dist/git-smee.exe" -DestinationPath $asset -Force
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+          "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii
+          "asset=$asset" >> $env:GITHUB_OUTPUT
+          "checksum=$asset.sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Unix release assets
+        if: runner.os != 'Windows'
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
-          tag_name: ${{ env.TAG }}
-          files: git-smee-${{ env.TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          files: |
+            ${{ steps.package-unix.outputs.asset }}
+            ${{ steps.package-unix.outputs.checksum }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows release assets
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          files: |
+            ${{ steps.package-windows.outputs.asset }}
+            ${{ steps.package-windows.outputs.checksum }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update-homebrew:
-    needs: build-and-release
+    needs: [prepare-release, build-and-release]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Update Homebrew Tap
-        uses: mislav/bump-homebrew-formula-action@v3
+        uses: mislav/bump-homebrew-formula-action@ccf2332299a883f6af50a1d2d41e5df7904dd769 # v4.1
         with:
           homebrew-tap: errfld/homebrew-git-smee
           formula-name: git-smee
-          tag-name: ${{ env.TAG }}
-          download-url: https://github.com/errfld/git-smee/releases/download/${{ env.TAG }}/git-smee-${{ env.TAG }}-aarch64-apple-darwin.tar.gz
+          tag-name: ${{ needs.prepare-release.outputs.tag }}
+          download-url: https://github.com/errfld/git-smee/releases/download/${{ needs.prepare-release.outputs.tag }}/git-smee-${{ needs.prepare-release.outputs.tag }}-aarch64-apple-darwin.tar.gz
         env:
           COMMITTER_TOKEN: ${{ secrets.HOMEBREW_PAT }}

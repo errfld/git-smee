@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -11,94 +18,228 @@ jobs:
   build-and-test:
     name: Build & test (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       matrix:
         toolchain: [stable, beta, nightly]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust (${{ matrix.toolchain }})
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Build
-        run: cargo build --workspace --all-targets --verbose
+        run: cargo build --workspace --all-targets --all-features --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --verbose
+        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
 
-  windows-build-and-test:
-    name: Build & test (windows, stable)
-    runs-on: windows-latest
+  macos-build-and-test:
+    name: Build & test (macOS, stable)
+    runs-on: macos-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: stable
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Build
-        run: cargo build --workspace --all-targets --verbose
+        run: cargo build --workspace --all-targets --all-features --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --verbose
+        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
+
+  windows-build-and-test:
+    name: Build & test (windows, stable)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets --all-features --locked --verbose
+
+      - name: Test
+        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
+
+  msrv-build-and-test:
+    name: Build & test (MSRV 1.85.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (1.85.0)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: 1.85.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets --all-features --locked --verbose
+
+      - name: Test
+        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
 
   lint:
     name: Lint (fmt + clippy, stable)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Format check
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  workflow-lint:
+    name: Workflow lint (actionlint + shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+      - name: Lint Unix hook template
+        run: |
+          sed \
+            -e 's|{git_smee_executable}|/tmp/git-smee|g' \
+            -e 's|{config_path}|/tmp/.git-smee.toml|g' \
+            -e 's|{hook}|pre-commit|g' \
+            crates/git-smee-core/src/scripts/hook_template_unix > /tmp/git-smee-hook-template.sh
+          shellcheck /tmp/git-smee-hook-template.sh
+
+  security-advisories:
+    name: Security advisories (stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@de6f06126afb86b5250a16ff961c57360c5edccc # v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit dependencies
+        run: cargo audit
 
   coverage:
     name: Coverage (stable)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust (stable) + llvm-tools
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: stable
           components: llvm-tools-preview
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@de6f06126afb86b5250a16ff961c57360c5edccc # v2
         with:
           tool: cargo-llvm-cov
 
+      - name: Enforce coverage floor
+        run: cargo llvm-cov --workspace --all-features --locked --summary-only --fail-under-lines 70 -- --skip repository::tests::
+
       - name: Run coverage
         run: |
-          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+          cargo llvm-cov --workspace --all-features --locked --lcov --output-path lcov.info -- --skip repository::tests::
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-lcov
           path: lcov.info
+
+  repository-tests-serialized:
+    name: Repository tests (serialized guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Run serialized repository tests
+        run: cargo test -p git-smee-core --lib --locked repository::tests:: -- --test-threads=1
+
+  repository-tests-flake-detection:
+    name: Repository tests (flake detection)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Repeat repository tests to catch env/cwd flakes
+        run: |
+          for attempt in 1 2 3 4 5; do
+            echo "flake detection attempt $attempt"
+            cargo test -p git-smee-core --lib --locked --verbose repository::tests::
+          done
