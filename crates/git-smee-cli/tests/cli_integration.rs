@@ -692,6 +692,36 @@ command = "true"
         .success();
 }
 
+#[cfg(unix)]
+#[test]
+fn given_special_character_config_path_when_running_installed_hook_then_wrapper_executes() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let custom_config = test_repo.write_config_at(
+        "configs/it's 100% ready/hook config.toml",
+        r#"
+[[pre-commit]]
+command = "true"
+"#,
+    );
+
+    let mut install = Command::new(cargo::cargo_bin!("git-smee"));
+    install
+        .current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&custom_config)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_path = test_repo.path.join(".git/hooks/pre-commit");
+    let mut hook = Command::new(hook_path);
+    hook.current_dir(&test_repo.path)
+        .env("PATH", "/usr/bin:/bin")
+        .assert()
+        .success();
+}
+
 #[test]
 fn given_custom_config_path_when_initializing_then_init_writes_requested_file() {
     let test_repo = common::TestRepo::default();
