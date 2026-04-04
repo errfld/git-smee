@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn given_not_in_git_repo_when_finding_root_then_returns_error() {
+    fn given_no_git_in_bounded_ancestry_when_finding_root_then_returns_error() {
         let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let original_dir = env::current_dir().unwrap();
