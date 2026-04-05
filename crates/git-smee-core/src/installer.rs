@@ -8,6 +8,8 @@ use thiserror::Error;
 
 /// Marker string used to identify files managed by git-smee.
 pub const MANAGED_FILE_MARKER: &str = "THIS FILE IS MANAGED BY git-smee";
+const MANAGED_FILE_SCAN_BYTES: usize = 8 * 1024;
+const MANAGED_FILE_SCAN_LINES: usize = 32;
 
 /// Prefixes content with a managed marker using `#` comments.
 ///
@@ -289,7 +291,7 @@ impl FileSystemHookInstaller {
             path: path.to_string_lossy().to_string(),
             source,
         })?;
-        let mut header_buf = [0_u8; 1024];
+        let mut header_buf = [0_u8; MANAGED_FILE_SCAN_BYTES];
         let bytes_read =
             file.read(&mut header_buf)
                 .map_err(|source| Error::FailedToReadExistingFile {
@@ -300,8 +302,14 @@ impl FileSystemHookInstaller {
         let marker_hash = format!("# {MANAGED_FILE_MARKER}");
         let marker_rem = format!("REM {MANAGED_FILE_MARKER}");
 
-        for line in header.split(|byte| *byte == b'\n').take(8) {
-            let normalized_line = line.strip_suffix(b"\r").unwrap_or(line);
+        for line in header
+            .split(|byte| *byte == b'\n')
+            .take(MANAGED_FILE_SCAN_LINES)
+        {
+            let normalized_line = line.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(line);
+            let normalized_line = normalized_line
+                .strip_suffix(b"\r")
+                .unwrap_or(normalized_line);
             if normalized_line.is_empty() {
                 continue;
             }
@@ -398,9 +406,10 @@ pub fn install_hooks_with_options<T: HookInstaller>(
         Platform::Unix => shell_single_quote(&options.config_path),
         Platform::Windows => cmd_escape(&options.config_path),
     };
-    config
-        .hooks
-        .keys()
+    let mut phases: Vec<_> = config.hooks.keys().copied().collect();
+    phases.sort_by_key(|phase| phase.as_str());
+    phases
+        .into_iter()
         .map(|life_cycle_phase| {
             let lifecycle_phase_kebap = life_cycle_phase.to_string();
             let content = platform
@@ -431,25 +440,34 @@ fn cmd_escape(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicU8, Ordering},
+    };
 
     use super::*;
 
     struct AssertingHookInstaller {
-        assertion: fn(hook_name: &str, hook_content: &str) -> (),
+        assertion: fn(hook_name: &str, hook_content: &str),
         number_of_installed_hooks: AtomicU8,
         number_of_installed_config_files: AtomicU8,
         temp_dir: tempfile::TempDir,
+        installed_hook_names: Mutex<Vec<String>>,
     }
 
     impl AssertingHookInstaller {
-        fn new(assertion: fn(hook_name: &str, hook_content: &str) -> ()) -> Self {
+        fn new(assertion: fn(hook_name: &str, hook_content: &str)) -> Self {
             Self {
                 assertion,
                 number_of_installed_hooks: AtomicU8::new(0),
                 number_of_installed_config_files: AtomicU8::new(0),
                 temp_dir: tempfile::tempdir().unwrap(),
+                installed_hook_names: Mutex::new(Vec::new()),
             }
+        }
+
+        fn installed_hook_names(&self) -> Vec<String> {
+            self.installed_hook_names.lock().unwrap().clone()
         }
     }
 
@@ -458,6 +476,10 @@ mod tests {
             (self.assertion)(hook_name, hook_content);
             self.number_of_installed_hooks
                 .fetch_add(1, Ordering::SeqCst);
+            self.installed_hook_names
+                .lock()
+                .unwrap()
+                .push(hook_name.to_string());
             let hook = self.temp_dir.path().join(hook_name);
             fs::write(&hook, hook_content).unwrap();
             Ok(hook)
@@ -560,6 +582,54 @@ mod tests {
         assert_eq!(
             installer.number_of_installed_hooks.load(Ordering::SeqCst),
             2
+        );
+        assert_eq!(
+            installer.installed_hook_names(),
+            vec!["pre-commit".to_string(), "pre-push".to_string()]
+        );
+    }
+
+    #[test]
+    fn given_unsorted_hooks_when_installing_then_install_order_is_deterministic() {
+        let mut hooks_map = std::collections::HashMap::new();
+        hooks_map.insert(
+            crate::config::LifeCyclePhase::PrePush,
+            vec![crate::config::HookDefinition {
+                command: "echo Pre-push hook".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        hooks_map.insert(
+            crate::config::LifeCyclePhase::ApplypatchMsg,
+            vec![crate::config::HookDefinition {
+                command: "echo Applypatch hook".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        hooks_map.insert(
+            crate::config::LifeCyclePhase::PreCommit,
+            vec![crate::config::HookDefinition {
+                command: "echo Pre-commit hook".to_string(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig { hooks: hooks_map };
+        let options = HookScriptOptions::new(
+            PathBuf::from("/tmp/git-smee-bin"),
+            PathBuf::from("/tmp/custom-config.toml"),
+        );
+        let installer = AssertingHookInstaller::new(|_, _| {});
+
+        let result = install_hooks_with_options(&config, &installer, &options);
+
+        assert!(result.is_ok());
+        assert_eq!(
+            installer.installed_hook_names(),
+            vec![
+                "applypatch-msg".to_string(),
+                "pre-commit".to_string(),
+                "pre-push".to_string(),
+            ]
         );
     }
 
