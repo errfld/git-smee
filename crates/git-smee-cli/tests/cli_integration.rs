@@ -72,6 +72,48 @@ fn given_git_smee_when_install_then_hooks_are_present() {
 }
 
 #[test]
+fn given_bare_repo_when_install_then_hooks_are_present() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    fs::write(
+        bare_repo.path().join(".git-smee.toml"),
+        r#"
+[[pre-receive]]
+command = "echo bare"
+"#,
+    )
+    .expect("failed to write config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .arg("install")
+        .assert()
+        .success();
+
+    assert!(bare_repo.path().join("hooks").join("pre-receive").exists());
+}
+
+#[test]
+fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_arguments() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("run pre-commit \"$@\""));
+
+    #[cfg(windows)]
+    assert!(hook_content.contains("run pre-commit %*"));
+}
+
+#[test]
 fn given_invalid_hook_when_run_then_user_friendly_error() {
     let test_repo = common::TestRepo::default();
 
@@ -99,6 +141,27 @@ fn given_missing_config_when_install_then_user_friendly_error() {
         .stderr(
             predicate::str::contains("Error: The specified configuration file is missing")
                 .and(predicate::str::contains("MissingFile").not()),
+        );
+}
+
+#[test]
+fn given_directory_config_when_install_then_user_friendly_not_a_file_error() {
+    let test_repo = common::TestRepo::default();
+    let config_dir = test_repo.path.join("conf.toml");
+    fs::create_dir_all(&config_dir).expect("failed to create config directory");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&config_dir)
+        .arg("install")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(
+                "Error: The specified configuration path exists but is not a regular file",
+            )
+            .and(predicate::str::contains("NotAFile").not()),
         );
 }
 
@@ -409,6 +472,36 @@ command = "echo from-tilde-cli"
 
 #[cfg(unix)]
 #[test]
+fn given_tilde_user_config_flag_when_installing_then_cli_keeps_literal_path() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let fake_home = TempDir::new().expect("failed to create fake home");
+    let literal_config = test_repo.write_config_at(
+        "~alice/custom.toml",
+        r#"
+[[pre-commit]]
+command = "echo literal-tilde-user"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .env("HOME", fake_home.path())
+        .arg("--config")
+        .arg("~alice/custom.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    assert!(hook_content.contains(literal_config.to_string_lossy().as_ref()));
+    assert!(!hook_content.contains(fake_home.path().to_string_lossy().as_ref()));
+}
+
+#[cfg(unix)]
+#[test]
 fn given_tilde_git_smee_config_env_when_installing_then_cli_expands_home_path_for_hook_script() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
@@ -442,6 +535,35 @@ command = "echo from-tilde-env"
 
     assert!(hook_content.contains(home_config_path.to_string_lossy().as_ref()));
     assert!(!hook_content.contains("~/.config/git-smee/tilde-env-config.toml"));
+}
+
+#[cfg(unix)]
+#[test]
+fn given_tilde_user_config_env_when_installing_then_cli_keeps_literal_path() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let fake_home = TempDir::new().expect("failed to create fake home");
+    let literal_config = test_repo.write_config_at(
+        "~alice/env.toml",
+        r#"
+[[pre-push]]
+command = "echo literal-tilde-env"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .env("HOME", fake_home.path())
+        .env("GIT_SMEE_CONFIG", "~alice/env.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-push")).expect("missing hook");
+
+    assert!(hook_content.contains(literal_config.to_string_lossy().as_ref()));
+    assert!(!hook_content.contains(fake_home.path().to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -550,6 +672,45 @@ command = "echo from-invocation-config"
 }
 
 #[test]
+fn given_successful_hook_when_running_then_cli_stdout_contains_only_hook_output() {
+    let test_repo = common::TestRepo::default();
+    let command = if cfg!(windows) {
+        "echo hook-output"
+    } else {
+        "printf 'hook-output\\n'"
+    };
+    test_repo.write_config(&format!("[[pre-commit]]\ncommand = {command:?}\n"));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-commit"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("hook-output")
+                .and(predicate::str::contains("Running hook:").not()),
+        );
+}
+
+#[cfg(unix)]
+#[test]
+fn given_hook_args_when_running_then_command_receives_positional_args() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config(
+        r#"
+[[commit-msg]]
+command = "test \"$1\" = \"COMMIT_EDITMSG\""
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "COMMIT_EDITMSG"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn given_relative_config_env_from_subdir_when_running_then_cli_resolves_from_invocation_dir() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
@@ -580,6 +741,26 @@ command = "echo from-invocation-env-config"
 }
 
 #[test]
+fn given_hook_args_when_running_then_command_receives_env_arg_contract() {
+    let test_repo = common::TestRepo::default();
+    let assertion_command = if cfg!(windows) {
+        "if \"%GIT_SMEE_HOOK_ARGC%\"==\"2\" (if \"%GIT_SMEE_HOOK_ARG_1%\"==\"alpha\" (if \"%GIT_SMEE_HOOK_ARG_2%\"==\"beta\" (exit /b 0) else (exit /b 1)) else (exit /b 1)) else (exit /b 1)"
+    } else {
+        "test \"$GIT_SMEE_HOOK_ARGC\" = \"2\" && test \"$GIT_SMEE_HOOK_ARG_1\" = \"alpha\" && test \"$GIT_SMEE_HOOK_ARG_2\" = \"beta\""
+    };
+
+    test_repo.write_config(&format!(
+        "[[commit-msg]]\ncommand = {assertion_command:?}\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "alpha", "beta"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn given_failing_hook_when_running_then_cli_surfaces_non_zero_exit_code() {
     let test_repo = common::TestRepo::default();
     test_repo.write_config(
@@ -599,6 +780,26 @@ command = "exit 1"
             predicate::str::contains("Error: Hook execution failed with exit code")
                 .and(predicate::str::contains("ExecutionFailed").not()),
         );
+}
+
+#[test]
+fn given_bare_repo_when_running_then_hook_executes() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    fs::write(
+        bare_repo.path().join(".git-smee.toml"),
+        r#"
+[[pre-receive]]
+command = "echo bare-run"
+"#,
+    )
+    .expect("failed to write config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .args(["run", "pre-receive"])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -628,6 +829,62 @@ command = "echo custom"
     assert!(hook_content.contains("--config"));
     assert!(hook_content.contains(expected_executable.to_string_lossy().as_ref()));
     assert!(hook_content.contains(expected_config_path.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn given_default_config_when_installing_then_hook_script_keeps_portable_relative_path() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
+
+    #[cfg(windows)]
+    {
+        let normalized_hook_content = hook_content.replace('\\', "/");
+        assert!(normalized_hook_content.contains(".git-smee.toml"));
+        assert!(
+            !normalized_hook_content
+                .contains(&test_repo.config_path().to_string_lossy().replace('\\', "/"),)
+        );
+    }
+}
+
+#[test]
+fn given_default_config_alias_when_installing_then_hook_script_keeps_portable_relative_path() {
+    let test_repo = common::TestRepo::default();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg("./.git-smee.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
+
+    #[cfg(windows)]
+    {
+        let normalized_hook_content = hook_content.replace('\\', "/");
+        assert!(normalized_hook_content.contains(".git-smee.toml"));
+        assert!(
+            !normalized_hook_content
+                .contains(&test_repo.config_path().to_string_lossy().replace('\\', "/"),)
+        );
+    }
 }
 
 #[test]
@@ -694,6 +951,36 @@ command = "true"
         .success();
 }
 
+#[cfg(unix)]
+#[test]
+fn given_special_character_config_path_when_running_installed_hook_then_wrapper_executes() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let custom_config = test_repo.write_config_at(
+        "configs/it's 100% ready/hook config.toml",
+        r#"
+[[pre-commit]]
+command = "true"
+"#,
+    );
+
+    let mut install = Command::new(cargo::cargo_bin!("git-smee"));
+    install
+        .current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&custom_config)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_path = test_repo.path.join(".git/hooks/pre-commit");
+    let mut hook = Command::new(hook_path);
+    hook.current_dir(&test_repo.path)
+        .env("PATH", "/usr/bin:/bin")
+        .assert()
+        .success();
+}
+
 #[test]
 fn given_custom_config_path_when_initializing_then_init_writes_requested_file() {
     let test_repo = common::TestRepo::default();
@@ -710,4 +997,190 @@ fn given_custom_config_path_when_initializing_then_init_writes_requested_file() 
 
     assert!(custom_config_path.exists());
     assert!(!test_repo.config_path().exists());
+}
+
+#[test]
+fn given_relative_config_flag_when_installing_from_subdir_then_cli_resolves_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let subdir = test_repo.path.join("subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    let custom_config = test_repo.write_config_at(
+        "subdir/configs/custom.toml",
+        r#"
+[[pre-commit]]
+command = "echo nested-install"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&subdir)
+        .arg("--config")
+        .arg("configs/custom.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    let normalized_hook_content = hook_content.replace('\\', "/");
+    assert!(normalized_hook_content.contains(&custom_config.to_string_lossy().replace('\\', "/")));
+}
+
+#[test]
+fn given_relative_config_env_when_installing_from_subdir_then_cli_resolves_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let subdir = test_repo.path.join("subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    let custom_config = test_repo.write_config_at(
+        "subdir/configs/env.toml",
+        r#"
+[[pre-push]]
+command = "echo nested-env-install"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&subdir)
+        .env("GIT_SMEE_CONFIG", "configs/env.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-push")).expect("missing hook");
+
+    let normalized_hook_content = hook_content.replace('\\', "/");
+    assert!(normalized_hook_content.contains(&custom_config.to_string_lossy().replace('\\', "/")));
+}
+
+#[test]
+fn given_relative_config_flag_when_initializing_from_subdir_then_cli_writes_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let subdir = test_repo.path.join("subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    let custom_config_path = test_repo.path.join("subdir/configs/init.toml");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&subdir)
+        .arg("--config")
+        .arg("configs/init.toml")
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(custom_config_path.exists());
+    assert!(!test_repo.path.join("configs/init.toml").exists());
+}
+
+#[test]
+fn given_relative_config_env_when_initializing_from_subdir_then_cli_writes_from_invocation_dir() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let subdir = test_repo.path.join("subdir");
+    fs::create_dir_all(&subdir).unwrap();
+    let custom_config_path = test_repo.path.join("subdir/configs/init-env.toml");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&subdir)
+        .env("GIT_SMEE_CONFIG", "configs/init-env.toml")
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(custom_config_path.exists());
+    assert!(!test_repo.path.join("configs/init-env.toml").exists());
+}
+
+#[test]
+fn given_managed_custom_config_when_init_without_force_then_it_refuses_managed_overwrite() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let custom_config_path = test_repo.path.join("configs/custom-managed.toml");
+    fs::create_dir_all(custom_config_path.parent().expect("missing parent")).unwrap();
+    fs::write(
+        &custom_config_path,
+        format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo stale\"\n"),
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&custom_config_path)
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Refusing to overwrite existing managed config file")
+                .and(predicate::str::contains("RefusingToOverwriteManagedConfigFile").not()),
+        );
+}
+
+#[test]
+fn given_unmanaged_custom_config_when_init_without_force_then_it_refuses_unmanaged_overwrite() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let custom_config_path = test_repo.path.join("configs/custom-unmanaged.toml");
+    fs::create_dir_all(custom_config_path.parent().expect("missing parent")).unwrap();
+    fs::write(
+        &custom_config_path,
+        "[[pre-commit]]\ncommand = \"echo custom\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&custom_config_path)
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Refusing to overwrite existing unmanaged config file")
+                .and(predicate::str::contains("RefusingToOverwriteUnmanagedConfigFile").not()),
+        );
+}
+
+#[test]
+fn given_managed_custom_config_when_init_with_force_then_it_overwrites_config() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let custom_config_path = test_repo.path.join("configs/custom-force.toml");
+    fs::create_dir_all(custom_config_path.parent().expect("missing parent")).unwrap();
+    fs::write(
+        &custom_config_path,
+        format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo stale\"\n"),
+    )
+    .unwrap();
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&custom_config_path)
+        .arg("init")
+        .arg("--force")
+        .assert()
+        .success();
+
+    let initialized = fs::read_to_string(custom_config_path).unwrap();
+    assert!(initialized.contains(MANAGED_FILE_MARKER));
+    assert!(initialized.contains("Default pre-commit hook"));
+}
+
+#[test]
+fn given_bare_repo_when_initializing_then_init_writes_default_config() {
+    let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
+    git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(bare_repo.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(bare_repo.path().join(".git-smee.toml").exists());
 }

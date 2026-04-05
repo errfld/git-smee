@@ -32,6 +32,17 @@ fn given_invalid_path_when_reading_then_error() {
 }
 
 #[test]
+fn given_directory_path_when_reading_then_error_is_not_a_file() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let config_dir = temp_dir.path().join("conf.toml");
+    fs::create_dir_all(&config_dir).expect("failed to create config directory fixture");
+
+    let result = SmeeConfig::from_toml(&config_dir);
+
+    assert!(matches!(result, Err(config::Error::NotAFile)));
+}
+
+#[test]
 fn given_yaml_file_when_reading_then_error() {
     let path = PathBuf::from("tests/fixtures/wrong_extension.yaml");
     let result = SmeeConfig::from_toml(&path);

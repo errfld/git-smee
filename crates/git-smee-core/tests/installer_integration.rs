@@ -206,6 +206,72 @@ fn given_managed_marker_after_shebang_and_blank_line_when_installing_then_it_is_
 }
 
 #[test]
+fn given_bom_prefixed_managed_hook_when_installing_without_force_then_it_is_overwritten() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_commit = hooks_path.join("pre-commit");
+    let managed_with_bom =
+        format!("\u{FEFF}#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\necho 'stale managed hook'\n");
+    fs::write(&pre_commit, managed_with_bom).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    installer::install_hooks(&config, &installer).unwrap();
+
+    let installed = fs::read_to_string(pre_commit).unwrap();
+    assert!(installed.contains("run pre-commit"));
+}
+
+#[test]
+fn given_bom_prefixed_managed_config_when_initializing_without_force_then_refuses_managed_overwrite()
+ {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+
+    let config_path = repo.join(DEFAULT_CONFIG_FILE_NAME);
+    let managed_with_bom =
+        format!("\u{FEFF}# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo custom\"\n");
+    fs::write(&config_path, managed_with_bom).unwrap();
+
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let serialized_config: String = (&SmeeConfig::default()).try_into().unwrap();
+    let result = installer.install_config_file(&serialized_config);
+
+    assert!(matches!(
+        result,
+        Err(Error::RefusingToOverwriteManagedConfigFile { .. })
+    ));
+}
+
+#[test]
+fn given_managed_marker_beyond_previous_short_header_when_installing_then_it_is_overwritten() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_commit = hooks_path.join("pre-commit");
+    let long_header = std::iter::repeat_n("# generated preamble\n", 12).collect::<String>();
+    let managed_with_long_header = format!(
+        "#!/usr/bin/env sh\n{long_header}# {MANAGED_FILE_MARKER}\necho 'stale managed hook'\n"
+    );
+    fs::write(&pre_commit, managed_with_long_header).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    installer::install_hooks(&config, &installer).unwrap();
+
+    let installed = fs::read_to_string(pre_commit).unwrap();
+    assert!(installed.contains("run pre-commit"));
+}
+
+#[test]
 fn given_windows_style_managed_hook_when_installing_without_force_then_it_is_overwritten() {
     let temp_dir = tempfile::tempdir().unwrap();
     let repo = temp_dir.path().join("repo");
