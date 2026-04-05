@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -94,7 +94,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if is_default_config_path(&config_path, &env::current_dir()?) {
                 installer.install_config_file(&default_config)?;
             } else {
-                write_config_file(&config_path, &default_config, force)?;
+                installer::write_config_file(&config_path, &default_config, force)?;
             }
             Ok(())
         }
@@ -149,26 +149,6 @@ fn expand_user_home_path(path: PathBuf) -> PathBuf {
 
 fn read_config_file(config_path: &Path) -> Result<SmeeConfig, config::Error> {
     config::SmeeConfig::try_from(config_path)
-}
-
-fn write_config_file(
-    config_path: &Path,
-    content: &str,
-    force: bool,
-) -> Result<(), installer::Error> {
-    installer::FileSystemHookInstaller::ensure_can_write_managed_config(config_path, force)?;
-    if let Some(parent) = config_path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).map_err(|source| installer::Error::FailedToWriteConfigFile {
-            path: config_path.to_string_lossy().to_string(),
-            source,
-        })?;
-    }
-    fs::write(config_path, content).map_err(|source| installer::Error::FailedToWriteConfigFile {
-        path: config_path.to_string_lossy().to_string(),
-        source,
-    })
 }
 
 fn is_default_config_path(config_path: &Path, repository_root: &Path) -> bool {

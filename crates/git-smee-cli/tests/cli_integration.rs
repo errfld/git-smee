@@ -1000,6 +1000,32 @@ fn given_custom_config_path_when_initializing_then_init_writes_requested_file() 
 }
 
 #[test]
+fn given_managed_custom_config_when_init_without_force_then_it_refuses_to_overwrite() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let managed_custom = test_repo.write_config_at(
+        "configs/managed-init.toml",
+        &format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo managed custom\"\n"),
+    );
+    let original = fs::read_to_string(&managed_custom).expect("failed to read original config");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&managed_custom)
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("Error: Refusing to overwrite existing managed config file")
+                .and(predicate::str::contains("RefusingToOverwriteManagedConfigFile").not()),
+        );
+
+    let after = fs::read_to_string(&managed_custom).expect("failed to read config after init");
+    assert_eq!(after, original);
+}
+
+#[test]
 fn given_relative_config_flag_when_installing_from_subdir_then_cli_resolves_from_invocation_dir() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
