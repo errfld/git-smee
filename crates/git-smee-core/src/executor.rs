@@ -115,8 +115,9 @@ fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[St
 }
 
 fn is_hook_arg_env_key(key: &str) -> bool {
-    key.len() >= "GIT_SMEE_HOOK_ARG".len()
-        && key[.."GIT_SMEE_HOOK_ARG".len()].eq_ignore_ascii_case("GIT_SMEE_HOOK_ARG")
+    let prefix_len = "GIT_SMEE_HOOK_ARG".len();
+    key.get(..prefix_len)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GIT_SMEE_HOOK_ARG"))
 }
 
 fn run_hooks_with_runner<R: CommandRunner>(
@@ -432,6 +433,7 @@ mod tests {
 
     #[test]
     fn given_empty_hook_args_when_applying_then_argc_is_zero_and_no_indexed_args_are_added() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let mut command = Command::new("echo");
 
         apply_hook_arg_env(&mut command, &[]);
@@ -444,8 +446,10 @@ mod tests {
         assert!(envs.iter().any(|(key, value)| {
             key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("0"))
         }));
-        assert!(!envs.iter().any(|(key, _)| {
-            is_hook_arg_env_key(&key.to_string_lossy()) && key != "GIT_SMEE_HOOK_ARGC"
+        assert!(!envs.iter().any(|(key, value)| {
+            value.is_some()
+                && is_hook_arg_env_key(&key.to_string_lossy())
+                && key != "GIT_SMEE_HOOK_ARGC"
         }));
     }
 
