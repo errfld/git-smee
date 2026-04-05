@@ -17,6 +17,7 @@ const MANAGED_FILE_SCAN_LINES: usize = 32;
 /// so script executability is preserved.
 pub fn with_managed_header(content: &str) -> String {
     with_managed_header_with_prefix(content, "#")
+        .expect("default managed header prefix should always be supported")
 }
 
 /// Prefixes content with a managed marker using the provided comment prefix.
@@ -25,22 +26,26 @@ pub fn with_managed_header(content: &str) -> String {
 /// so script executability is preserved.
 ///
 /// Supported prefixes are `#` (Unix-style) and `REM` (Windows batch).
-pub fn with_managed_header_with_prefix(content: &str, comment_prefix: &str) -> String {
-    assert!(
-        matches!(comment_prefix, "#" | "REM"),
-        "unsupported managed header prefix: {comment_prefix}"
-    );
+pub fn with_managed_header_with_prefix(
+    content: &str,
+    comment_prefix: &str,
+) -> Result<String, Error> {
+    if !matches!(comment_prefix, "#" | "REM") {
+        return Err(Error::UnsupportedManagedHeaderPrefix {
+            prefix: comment_prefix.to_string(),
+        });
+    }
     let marker_line = format!("{comment_prefix} {MANAGED_FILE_MARKER}");
     if content.starts_with("#!") {
         if let Some(shebang_end) = content.find('\n') {
             let (shebang, rest) = content.split_at(shebang_end + 1);
-            return format!("{shebang}{marker_line}\n\n{rest}");
+            return Ok(format!("{shebang}{marker_line}\n\n{rest}"));
         }
 
-        return format!("{content}\n{marker_line}\n\n");
+        return Ok(format!("{content}\n{marker_line}\n\n"));
     }
 
-    format!("{marker_line}\n\n{content}")
+    Ok(format!("{marker_line}\n\n{content}"))
 }
 
 #[derive(Debug, Error)]
@@ -94,6 +99,8 @@ pub enum Error {
     },
     #[error("Failed to resolve current executable path: {0}")]
     FailedToResolveCurrentExecutable(std::io::Error),
+    #[error("Unsupported managed header prefix '{prefix}'. Expected '#' or 'REM'.")]
+    UnsupportedManagedHeaderPrefix { prefix: String },
 }
 
 /// Behavioral definition of a hook installer.
@@ -679,15 +686,19 @@ mod tests {
     #[test]
     fn given_custom_prefix_when_adding_managed_header_then_prefix_is_used() {
         let config = "[[pre-commit]]\ncommand = \"cargo test\"";
-        let managed = with_managed_header_with_prefix(config, "REM");
+        let managed = with_managed_header_with_prefix(config, "REM").unwrap();
 
         assert!(managed.starts_with("REM THIS FILE IS MANAGED BY git-smee"));
     }
 
     #[test]
-    #[should_panic(expected = "unsupported managed header prefix")]
-    fn given_unsupported_prefix_when_adding_managed_header_then_it_panics() {
-        let _ = with_managed_header_with_prefix("echo test", "//");
+    fn given_unsupported_prefix_when_adding_managed_header_then_it_returns_error() {
+        let result = with_managed_header_with_prefix("echo test", "//");
+
+        assert!(matches!(
+            result,
+            Err(Error::UnsupportedManagedHeaderPrefix { prefix }) if prefix == "//"
+        ));
     }
 
     #[test]
