@@ -865,7 +865,7 @@ fn given_managed_custom_config_when_init_without_force_then_it_refuses_to_overwr
         &format!("# {MANAGED_FILE_MARKER}\n\n[[pre-commit]]\ncommand = \"echo managed custom\"\n"),
     );
     let original = fs::read_to_string(&managed_custom).expect("failed to read original config");
- 
+
     let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
     cmd.current_dir(&test_repo.path)
         .arg("--config")

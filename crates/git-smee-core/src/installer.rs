@@ -381,7 +381,9 @@ fn is_managed_file(path: &Path) -> Result<bool, Error> {
         .take(MANAGED_FILE_SCAN_LINES)
     {
         let normalized_line = line.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(line);
-        let normalized_line = normalized_line.strip_suffix(b"\r").unwrap_or(normalized_line);
+        let normalized_line = normalized_line
+            .strip_suffix(b"\r")
+            .unwrap_or(normalized_line);
         if normalized_line.is_empty() {
             continue;
         }
