@@ -104,6 +104,9 @@ impl CommandRunner for PlatformCommandRunner<'_> {
 fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[String]) {
     for (key, _) in env::vars_os() {
         if is_hook_arg_env_key(&key.to_string_lossy()) {
+            #[cfg(windows)]
+            shell_command.env_remove(key.to_string_lossy().to_ascii_uppercase());
+            #[cfg(not(windows))]
             shell_command.env_remove(key);
         }
     }
