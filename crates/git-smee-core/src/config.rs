@@ -126,7 +126,7 @@ pub struct HookDefinition {
     pub parallel_execution_allowed: bool,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug, Clone, Copy)]
 #[serde(rename_all = "kebab-case")]
 pub enum LifeCyclePhase {
     ApplypatchMsg,
@@ -154,42 +154,39 @@ pub enum LifeCyclePhase {
     PostIndexChange,
 }
 
-impl FromStr for LifeCyclePhase {
-    type Err = crate::Error;
+const ALL_LIFECYCLE_PHASES: [LifeCyclePhase; 23] = [
+    LifeCyclePhase::ApplypatchMsg,
+    LifeCyclePhase::PreApplypatch,
+    LifeCyclePhase::PostApplypatch,
+    LifeCyclePhase::PreCommit,
+    LifeCyclePhase::PrepareCommitMsg,
+    LifeCyclePhase::CommitMsg,
+    LifeCyclePhase::PostCommit,
+    LifeCyclePhase::PreMergeCommit,
+    LifeCyclePhase::PreRebase,
+    LifeCyclePhase::PostCheckout,
+    LifeCyclePhase::PostMerge,
+    LifeCyclePhase::PostRewrite,
+    LifeCyclePhase::PrePush,
+    LifeCyclePhase::PreReceive,
+    LifeCyclePhase::Update,
+    LifeCyclePhase::ProcReceive,
+    LifeCyclePhase::PostReceive,
+    LifeCyclePhase::ReferenceTransaction,
+    LifeCyclePhase::PushToCheckout,
+    LifeCyclePhase::PreAutoGc,
+    LifeCyclePhase::PostUpdate,
+    LifeCyclePhase::FsmonitorWatchman,
+    LifeCyclePhase::PostIndexChange,
+];
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "applypatch-msg" => Ok(LifeCyclePhase::ApplypatchMsg),
-            "pre-applypatch" => Ok(LifeCyclePhase::PreApplypatch),
-            "post-applypatch" => Ok(LifeCyclePhase::PostApplypatch),
-            "pre-commit" => Ok(LifeCyclePhase::PreCommit),
-            "prepare-commit-msg" => Ok(LifeCyclePhase::PrepareCommitMsg),
-            "commit-msg" => Ok(LifeCyclePhase::CommitMsg),
-            "post-commit" => Ok(LifeCyclePhase::PostCommit),
-            "pre-merge-commit" => Ok(LifeCyclePhase::PreMergeCommit),
-            "pre-rebase" => Ok(LifeCyclePhase::PreRebase),
-            "post-checkout" => Ok(LifeCyclePhase::PostCheckout),
-            "post-merge" => Ok(LifeCyclePhase::PostMerge),
-            "post-rewrite" => Ok(LifeCyclePhase::PostRewrite),
-            "pre-push" => Ok(LifeCyclePhase::PrePush),
-            "pre-receive" => Ok(LifeCyclePhase::PreReceive),
-            "update" => Ok(LifeCyclePhase::Update),
-            "proc-receive" => Ok(LifeCyclePhase::ProcReceive),
-            "post-receive" => Ok(LifeCyclePhase::PostReceive),
-            "reference-transaction" => Ok(LifeCyclePhase::ReferenceTransaction),
-            "push-to-checkout" => Ok(LifeCyclePhase::PushToCheckout),
-            "pre-auto-gc" => Ok(LifeCyclePhase::PreAutoGc),
-            "post-update" => Ok(LifeCyclePhase::PostUpdate),
-            "fsmonitor-watchman" => Ok(LifeCyclePhase::FsmonitorWatchman),
-            "post-index-change" => Ok(LifeCyclePhase::PostIndexChange),
-            _ => Err(Error::UnknownLifeCyclePhase(s.to_string())),
-        }
+impl LifeCyclePhase {
+    pub const fn all() -> &'static [LifeCyclePhase] {
+        &ALL_LIFECYCLE_PHASES
     }
-}
 
-impl fmt::Display for LifeCyclePhase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
+    pub const fn as_str(self) -> &'static str {
+        match self {
             LifeCyclePhase::ApplypatchMsg => "applypatch-msg",
             LifeCyclePhase::PreApplypatch => "pre-applypatch",
             LifeCyclePhase::PostApplypatch => "post-applypatch",
@@ -213,8 +210,25 @@ impl fmt::Display for LifeCyclePhase {
             LifeCyclePhase::PostUpdate => "post-update",
             LifeCyclePhase::FsmonitorWatchman => "fsmonitor-watchman",
             LifeCyclePhase::PostIndexChange => "post-index-change",
-        };
-        f.write_str(s)
+        }
+    }
+}
+
+impl FromStr for LifeCyclePhase {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|phase| phase.as_str() == s)
+            .ok_or_else(|| Error::UnknownLifeCyclePhase(s.to_string()))
+    }
+}
+
+impl fmt::Display for LifeCyclePhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -363,36 +377,48 @@ mod tests {
 
     #[test]
     fn given_lifecycle_when_from_str_then_correct_enum_returned() {
-        let all_enums = [
-            LifeCyclePhase::ApplypatchMsg,
-            LifeCyclePhase::PreApplypatch,
-            LifeCyclePhase::PostApplypatch,
-            LifeCyclePhase::PreCommit,
-            LifeCyclePhase::PrepareCommitMsg,
-            LifeCyclePhase::CommitMsg,
-            LifeCyclePhase::PostCommit,
-            LifeCyclePhase::PreMergeCommit,
-            LifeCyclePhase::PreRebase,
-            LifeCyclePhase::PostCheckout,
-            LifeCyclePhase::PostMerge,
-            LifeCyclePhase::PostRewrite,
-            LifeCyclePhase::PrePush,
-            LifeCyclePhase::PreReceive,
-            LifeCyclePhase::Update,
-            LifeCyclePhase::ProcReceive,
-            LifeCyclePhase::PostReceive,
-            LifeCyclePhase::ReferenceTransaction,
-            LifeCyclePhase::PushToCheckout,
-            LifeCyclePhase::PreAutoGc,
-            LifeCyclePhase::PostUpdate,
-            LifeCyclePhase::FsmonitorWatchman,
-            LifeCyclePhase::PostIndexChange,
-        ];
-        all_enums.iter().for_each(|phase| {
+        LifeCyclePhase::all().iter().for_each(|phase| {
             let phase_str = phase.to_string();
             let parsed_phase = LifeCyclePhase::from_str(&phase_str).unwrap();
             assert_eq!(&parsed_phase, phase);
         });
+    }
+
+    #[test]
+    fn given_supported_hooks_table_when_checking_readme_then_it_matches_runtime_supported_hooks() {
+        let readme_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("README.md");
+        let readme = fs::read_to_string(readme_path).unwrap();
+        let table = readme
+            .split("### Supported Git Hooks")
+            .nth(1)
+            .and_then(|section| section.split("### Hook argument forwarding").next())
+            .expect("README supported hooks section should exist");
+        let documented_hooks: Vec<String> = table
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.starts_with('|')
+                    || trimmed.starts_with("| Hook")
+                    || trimmed.starts_with("|------")
+                {
+                    return None;
+                }
+                trimmed
+                    .split('|')
+                    .nth(1)
+                    .map(str::trim)
+                    .filter(|hook| !hook.is_empty())
+                    .map(|hook| hook.trim_matches('`').to_owned())
+            })
+            .collect();
+        let runtime_hooks: Vec<String> = LifeCyclePhase::all()
+            .iter()
+            .map(|phase| phase.to_string())
+            .collect();
+
+        assert_eq!(documented_hooks, runtime_hooks);
     }
 
     #[test]

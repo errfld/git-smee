@@ -159,8 +159,8 @@ fn redact_command(command: &str) -> String {
         .and_then(|index| tokens.get(index))
         .cloned()
         .unwrap_or_else(|| "<redacted>".to_string());
-    if redacted.len() > 80 {
-        redacted.truncate(77);
+    if redacted.chars().count() > 80 {
+        redacted = redacted.chars().take(77).collect();
         redacted.push_str("...");
     }
     if let Some(index) = executable_index
@@ -194,17 +194,17 @@ fn tokenize_command(command: &str) -> Vec<String> {
     let mut current = String::new();
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
-    let mut escaped = false;
+    let mut chars = command.chars().peekable();
 
-    for ch in command.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
+    while let Some(ch) = chars.next() {
         match ch {
             '\\' if !in_single_quotes => {
-                escaped = true;
+                current.push(ch);
+                if let Some(next) = chars.peek().copied()
+                    && (next.is_whitespace() || matches!(next, '\\' | '\'' | '"'))
+                {
+                    current.push(chars.next().expect("peeked char should exist"));
+                }
             }
             '\'' if !in_double_quotes => {
                 in_single_quotes = !in_single_quotes;
@@ -221,9 +221,6 @@ fn tokenize_command(command: &str) -> Vec<String> {
         }
     }
 
-    if escaped {
-        current.push('\\');
-    }
     if !current.is_empty() {
         tokens.push(current);
     }
@@ -240,6 +237,7 @@ mod tests {
     };
 
     use assert2::assert;
+    use proptest::prelude::*;
 
     use crate::config::HookDefinition;
 
@@ -481,6 +479,34 @@ mod tests {
     }
 
     #[test]
+    fn given_long_unicode_executable_when_redacting_then_name_is_truncated_without_panicking() {
+        let executable = "ä".repeat(120);
+        let command = format!("{executable} --flag");
+
+        let redacted = redact_command(&command);
+
+        assert_eq!(redacted, format!("{}... <args redacted>", "ä".repeat(77)));
+    }
+
+    #[test]
+    fn given_windows_style_path_when_redacting_then_backslashes_are_preserved() {
+        let redacted =
+            redact_command(r#""C:\Program Files\Git\bin\bash.exe" -lc "echo secret-value""#);
+
+        assert_eq!(
+            redacted,
+            r#"C:\Program Files\Git\bin\bash.exe <args redacted>"#
+        );
+    }
+
+    #[test]
+    fn given_escaped_spaces_when_redacting_then_backslashes_are_preserved() {
+        let redacted = redact_command(r#"./path\ with\ spaces/tool --token secret-value"#);
+
+        assert_eq!(redacted, r#"./path\ with\ spaces/tool <args redacted>"#);
+    }
+
+    #[test]
     fn given_empty_command_when_executing_then_no_command_defined_error() {
         let runner = FakeRunner::with_default_outcomes(vec![]);
         let result = execute_command("   ", &runner, &[]);
@@ -643,5 +669,28 @@ mod tests {
         assert_eq!(calls[0], "sequential");
         assert!(calls.iter().any(|call| call == "parallel-ok"));
         assert!(calls.iter().any(|call| call == "parallel-fail"));
+    }
+
+    proptest! {
+        #[test]
+        fn redact_command_never_panics_for_arbitrary_input(command in any::<String>()) {
+            let _ = redact_command(&command);
+        }
+
+        #[test]
+        fn redact_command_hides_inline_env_secret_values(
+            key in "[A-Z_][A-Z0-9_]{0,7}",
+            secret_segments in prop::collection::vec("[qxz]{3,8}", 1..4),
+            executable_suffix in "[A-Z0-9_./:\\\\-]{1,24}"
+        ) {
+            let secret = secret_segments.join(" ");
+            let executable = format!("CMD_{executable_suffix}");
+            let command = format!(r#"{key}="{secret}" {executable} --flag trailing"#);
+
+            let redacted = redact_command(&command);
+
+            prop_assert!(!redacted.contains(&secret));
+            prop_assert!(redacted.ends_with(" <args redacted>"));
+        }
     }
 }
