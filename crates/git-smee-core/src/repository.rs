@@ -71,14 +71,17 @@ pub enum Error {
 /// ```
 pub fn find_git_root() -> Result<PathBuf, Error> {
     let current_dir = env::current_dir().map_err(Error::FailedToChangeDirectory)?;
+    find_git_root_from_path(&current_dir)
+}
 
-    if git_rev_parse_bool("--is-inside-work-tree")?
-        && let Some(root) = git_rev_parse_path("--show-toplevel")?
+fn find_git_root_from_path(current_dir: &Path) -> Result<PathBuf, Error> {
+    if git_rev_parse_bool(current_dir, "--is-inside-work-tree")?
+        && let Some(root) = git_rev_parse_path(current_dir, "--show-toplevel")?
     {
         let canonical_root = root
             .canonicalize()
             .map_err(Error::FailedToChangeDirectory)?;
-        if !git_rev_parse_bool("--is-bare-repository")?
+        if !git_rev_parse_bool(current_dir, "--is-bare-repository")?
             && canonical_root.file_name() == Some(OsStr::new(".git"))
             && let Some(worktree_root) = canonical_root.parent()
         {
@@ -89,10 +92,10 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
         return Ok(canonical_root);
     }
 
-    if git_rev_parse_bool("--is-inside-git-dir")?
-        && let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")?
+    if git_rev_parse_bool(current_dir, "--is-inside-git-dir")?
+        && let Some(git_dir) = git_rev_parse_path(current_dir, "--absolute-git-dir")?
     {
-        if git_rev_parse_bool("--is-bare-repository")? {
+        if git_rev_parse_bool(current_dir, "--is-bare-repository")? {
             return git_dir
                 .canonicalize()
                 .map_err(Error::FailedToChangeDirectory);
@@ -111,8 +114,8 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
             .map_err(Error::FailedToChangeDirectory);
     }
 
-    if git_rev_parse_bool("--is-bare-repository")? {
-        if let Some(git_dir) = git_rev_parse_path("--absolute-git-dir")? {
+    if git_rev_parse_bool(current_dir, "--is-bare-repository")? {
+        if let Some(git_dir) = git_rev_parse_path(current_dir, "--absolute-git-dir")? {
             return git_dir
                 .canonicalize()
                 .map_err(Error::FailedToChangeDirectory);
@@ -125,8 +128,9 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
     Err(Error::NotInGitRepository)
 }
 
-fn git_rev_parse_bool(flag: &str) -> Result<bool, Error> {
+fn git_rev_parse_bool(current_dir: &Path, flag: &str) -> Result<bool, Error> {
     let output = Command::new("git")
+        .current_dir(current_dir)
         .arg("rev-parse")
         .arg(flag)
         .output()
@@ -146,8 +150,9 @@ fn git_rev_parse_bool(flag: &str) -> Result<bool, Error> {
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
 
-fn git_rev_parse_path(flag: &str) -> Result<Option<PathBuf>, Error> {
+fn git_rev_parse_path(current_dir: &Path, flag: &str) -> Result<Option<PathBuf>, Error> {
     let output = Command::new("git")
+        .current_dir(current_dir)
         .arg("rev-parse")
         .arg(flag)
         .output()
@@ -258,9 +263,7 @@ pub fn ensure_in_repo_root() -> Result<(), Error> {
 /// Resolves a Git path (as interpreted by `git rev-parse --git-path`) from the
 /// given repository root.
 pub fn resolve_git_path(repository_root: &Path, git_path: &str) -> Result<PathBuf, Error> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repository_root)
+    let output = git_command_with_explicit_repo(repository_root)
         .arg("rev-parse")
         .arg("--git-path")
         .arg(git_path)
@@ -296,6 +299,21 @@ pub fn resolve_git_path(repository_root: &Path, git_path: &str) -> Result<PathBu
     }
 }
 
+fn git_command_with_explicit_repo(repository_root: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(repository_root);
+    for env_name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(env_name);
+    }
+    command
+}
+
 /// Resolves the effective hooks directory used by Git for the repository.
 pub fn resolve_hooks_path(repository_root: &Path) -> Result<PathBuf, Error> {
     resolve_git_path(repository_root, "hooks")
@@ -304,7 +322,7 @@ pub fn resolve_hooks_path(repository_root: &Path) -> Result<PathBuf, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, process::Command, sync::Mutex};
+    use std::{fs, sync::Mutex};
     use tempfile::TempDir;
 
     static CWD_MUTEX: Mutex<()> = Mutex::new(());
@@ -380,14 +398,11 @@ mod tests {
 
     #[test]
     fn given_not_in_git_repo_when_finding_root_then_returns_error() {
-        let _guard = CWD_MUTEX.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = env::current_dir().unwrap();
-        env::set_current_dir(temp_dir.path()).unwrap();
+        let nested = temp_dir.path().join("not-a-repo").join("deep");
+        fs::create_dir_all(&nested).unwrap();
 
-        let result = find_git_root();
-
-        env::set_current_dir(&original_dir).unwrap();
+        let result = find_git_root_from_path(&nested);
 
         assert!(matches!(result, Err(Error::NotInGitRepository)));
     }
@@ -653,9 +668,7 @@ mod tests {
     }
 
     fn git(repo: &Path, args: &[&str]) {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
+        let output = git_command_with_explicit_repo(repo)
             .args(args)
             .output()
             .unwrap();
@@ -668,9 +681,7 @@ mod tests {
     }
 
     fn git_output(repo: &Path, args: &[&str]) -> String {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
+        let output = git_command_with_explicit_repo(repo)
             .args(args)
             .output()
             .unwrap();
@@ -689,5 +700,36 @@ mod tests {
             .strip_prefix("//?/")
             .unwrap_or(&normalized)
             .to_string()
+    }
+
+    #[test]
+    fn given_explicit_repo_git_helper_when_git_dir_env_is_contaminated_then_it_ignores_it() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let bare_repo = temp_dir.path().join("remote.git");
+        fs::create_dir(&bare_repo).unwrap();
+        git(&bare_repo, &["init", "--bare"]);
+
+        let repo = temp_dir.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        git(&repo, &["init"]);
+
+        let original_git_dir = env::var_os("GIT_DIR");
+        let original_git_work_tree = env::var_os("GIT_WORK_TREE");
+        unsafe { env::set_var("GIT_DIR", bare_repo.as_os_str()) };
+        unsafe { env::remove_var("GIT_WORK_TREE") };
+
+        let hooks_path = resolve_hooks_path(&repo).unwrap();
+
+        match original_git_dir {
+            Some(value) => unsafe { env::set_var("GIT_DIR", value) },
+            None => unsafe { env::remove_var("GIT_DIR") },
+        }
+        match original_git_work_tree {
+            Some(value) => unsafe { env::set_var("GIT_WORK_TREE", value) },
+            None => unsafe { env::remove_var("GIT_WORK_TREE") },
+        }
+
+        assert_eq!(hooks_path, repo.join(".git").join("hooks"));
     }
 }
