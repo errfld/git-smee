@@ -172,7 +172,7 @@ fn parse_git_bool(flag: &str, bytes: &[u8]) -> Result<bool, Error> {
     }
 }
 
-fn parse_git_path(_flag: &str, bytes: &[u8]) -> Result<Option<PathBuf>, Error> {
+fn parse_git_path(flag: &str, bytes: &[u8]) -> Result<Option<PathBuf>, Error> {
     let trimmed = trim_git_output_path(bytes);
     if trimmed.is_empty() {
         return Ok(None);
@@ -180,6 +180,7 @@ fn parse_git_path(_flag: &str, bytes: &[u8]) -> Result<Option<PathBuf>, Error> {
 
     #[cfg(unix)]
     {
+        let _ = flag;
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
