@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -76,9 +77,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Run { hook, hook_args } => {
             repository::ensure_in_repo_root()?;
+            let stdin_payload = read_hook_stdin()?;
             let config = read_config_file(&config_path)?;
             let phase = config::LifeCyclePhase::from_str(&hook)?;
-            executor::execute_hook_with_args(&config, phase, &hook_args)?;
+            executor::execute_hook_with_args_and_stdin(
+                &config,
+                phase,
+                &hook_args,
+                stdin_payload.as_deref(),
+            )?;
             Ok(())
         }
         Command::Initialize { force } => {
@@ -120,6 +127,17 @@ fn normalize_user_config_path(path: PathBuf, invocation_dir: &Path) -> PathBuf {
     } else {
         invocation_dir.join(path)
     }
+}
+
+fn read_hook_stdin() -> io::Result<Option<Vec<u8>>> {
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        return Ok(None);
+    }
+
+    let mut payload = Vec::new();
+    stdin.lock().read_to_end(&mut payload)?;
+    Ok(Some(payload))
 }
 
 #[cfg(unix)]

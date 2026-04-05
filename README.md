@@ -188,6 +188,11 @@ On all platforms, git-smee also exports forwarded hook args as environment varia
 - `GIT_SMEE_HOOK_ARGC`: number of forwarded args
 - `GIT_SMEE_HOOK_ARG_1` ... `GIT_SMEE_HOOK_ARG_N`: individual argument values
 
+When `git smee run` receives stdin, it buffers that payload once and replays identical bytes to
+each configured command for the hook. This keeps stdin-driven hooks such as `pre-push`,
+`pre-receive`, and `post-receive` deterministic even when multiple commands are configured for
+the same phase.
+
 ## CLI Commands
 
 ```bash
