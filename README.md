@@ -24,11 +24,15 @@ brew tap errfld/git-smee
 brew install git-smee
 ```
 
+The Homebrew tap currently publishes the Apple Silicon (`aarch64-apple-darwin`) release artifact.
+
 ### Cargo
 
 ```bash
 cargo install git-smee-cli
 ```
+
+The minimum supported Rust version is `1.85.0`.
 
 ### From source
 
@@ -251,7 +255,21 @@ cargo test
 cargo run -p git-smee-cli -- --help
 ```
 
-GitHub Actions CI validates Linux (stable/beta/nightly) and Windows (stable) build/test compatibility.
+For local CI parity checks:
+
+```bash
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+rustup run stable cargo llvm-cov --workspace --all-features --locked --summary-only -- --skip repository::tests::
+cargo audit
+```
+
+GitHub Actions CI validates Linux (stable/beta/nightly), macOS (stable), Windows (stable), and MSRV (`1.85.0`) build/test compatibility.
+
+Release archives publish adjacent `.sha256` files. Verify downloads with:
+
+```bash
+shasum -a 256 -c git-smee-<version>-<target>.tar.gz.sha256
+```
 
 ## License
 
