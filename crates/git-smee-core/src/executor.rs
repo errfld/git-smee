@@ -118,9 +118,19 @@ fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[St
 }
 
 fn is_hook_arg_env_key(key: &str) -> bool {
-    let prefix_len = "GIT_SMEE_HOOK_ARG".len();
-    key.get(..prefix_len)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GIT_SMEE_HOOK_ARG"))
+    if key.eq_ignore_ascii_case("GIT_SMEE_HOOK_ARGC") {
+        return true;
+    }
+
+    let prefix = "GIT_SMEE_HOOK_ARG_";
+    let Some(prefix_part) = key.get(..prefix.len()) else {
+        return false;
+    };
+    if !prefix_part.eq_ignore_ascii_case(prefix) {
+        return false;
+    }
+    let suffix = &key[prefix.len()..];
+    !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn run_hooks_with_runner<R: CommandRunner>(
@@ -437,6 +447,59 @@ mod tests {
             env::remove_var("Git_Smee_Hook_Arg_2");
             env::remove_var("GIT_SMEE_HOOK_ARGC");
         }
+    }
+
+    #[test]
+    fn given_user_prefixed_hook_arg_env_when_applying_then_unrelated_entries_are_preserved() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::set_var("GIT_SMEE_HOOK_ARGS_FILE", "user-owned");
+            env::set_var("GIT_SMEE_HOOK_ARGUMENT_MODE", "strict");
+            env::set_var("GIT_SMEE_HOOK_ARG_2", "stale");
+        }
+
+        let mut command = Command::new("echo");
+        let hook_args = vec!["fresh".to_string()];
+        apply_hook_arg_env(&mut command, &hook_args);
+
+        let envs: Vec<(OsString, Option<OsString>)> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
+            .collect();
+
+        assert!(
+            !envs
+                .iter()
+                .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARGS_FILE" && value.is_none() })
+        );
+        assert!(
+            !envs
+                .iter()
+                .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARGUMENT_MODE" && value.is_none() })
+        );
+        assert!(
+            envs.iter()
+                .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARG_2" && value.is_none() })
+        );
+
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::remove_var("GIT_SMEE_HOOK_ARGS_FILE");
+            env::remove_var("GIT_SMEE_HOOK_ARGUMENT_MODE");
+            env::remove_var("GIT_SMEE_HOOK_ARG_2");
+        }
+    }
+
+    #[test]
+    fn given_hook_arg_contract_keys_when_matching_then_only_argc_and_numbered_args_match() {
+        assert!(is_hook_arg_env_key("GIT_SMEE_HOOK_ARGC"));
+        assert!(is_hook_arg_env_key("git_smee_hook_arg_12"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_0x1"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARGS_FILE"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARGUMENT_MODE"));
     }
 
     #[test]

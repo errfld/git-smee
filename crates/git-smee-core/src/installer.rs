@@ -97,6 +97,8 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("The specified configuration path exists but is not a regular file: {path}")]
+    ConfigPathNotAFile { path: String },
     #[error("Failed to resolve current executable path: {0}")]
     FailedToResolveCurrentExecutable(std::io::Error),
     #[error("Unsupported managed header prefix '{prefix}'. Expected '#' or 'REM'.")]
@@ -348,6 +350,12 @@ pub fn write_config_file(
 }
 
 fn ensure_can_write_config_file(config_file: &Path, force_overwrite: bool) -> Result<(), Error> {
+    if config_file.exists() && !config_file.is_file() {
+        return Err(Error::ConfigPathNotAFile {
+            path: config_file.to_string_lossy().to_string(),
+        });
+    }
+
     if !config_file.exists() || force_overwrite {
         return Ok(());
     }
