@@ -1059,6 +1059,53 @@ fn given_managed_custom_config_when_init_without_force_then_it_refuses_to_overwr
 }
 
 #[test]
+fn given_custom_config_directory_when_init_then_user_friendly_not_a_file_error() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let config_dir = test_repo.path.join("configs/directory-target.toml");
+    fs::create_dir_all(&config_dir).expect("failed to create config directory");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&config_dir)
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(
+                "Error: The specified configuration path exists but is not a regular file",
+            )
+            .and(predicate::str::contains("FailedToReadExistingFile").not())
+            .and(predicate::str::contains("FailedToWriteConfigFile").not()),
+        );
+}
+
+#[test]
+fn given_custom_config_directory_when_init_with_force_then_user_friendly_not_a_file_error() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let config_dir = test_repo.path.join("configs/force-directory-target.toml");
+    fs::create_dir_all(&config_dir).expect("failed to create config directory");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("--config")
+        .arg(&config_dir)
+        .arg("init")
+        .arg("--force")
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains(
+                "Error: The specified configuration path exists but is not a regular file",
+            )
+            .and(predicate::str::contains("FailedToReadExistingFile").not())
+            .and(predicate::str::contains("FailedToWriteConfigFile").not()),
+        );
+}
+
+#[test]
 fn given_relative_config_flag_when_installing_from_subdir_then_cli_resolves_from_invocation_dir() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
