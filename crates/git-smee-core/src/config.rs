@@ -24,7 +24,7 @@ impl SmeeConfig {
     ///
     /// # Arguments
     ///
-    /// * `path` - Paht to the TOML configuration file
+    /// * `path` - Path to the TOML configuration file
     ///
     /// # Examples
     ///
