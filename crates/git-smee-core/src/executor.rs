@@ -130,7 +130,7 @@ fn is_hook_arg_env_key(key: &str) -> bool {
         return false;
     }
     let suffix = &key[prefix.len()..];
-    !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+    !suffix.is_empty() && !suffix.starts_with('0') && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn run_hooks_with_runner<R: CommandRunner>(
@@ -497,6 +497,8 @@ mod tests {
         assert!(is_hook_arg_env_key("git_smee_hook_arg_12"));
         assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG"));
         assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_0"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_01"));
         assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_0x1"));
         assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARGS_FILE"));
         assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARGUMENT_MODE"));
