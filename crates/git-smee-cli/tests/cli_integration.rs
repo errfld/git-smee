@@ -18,10 +18,8 @@ fn stdin_capture_command(output_path: &Path) -> String {
 fn stdin_capture_command(output_path: &Path) -> String {
     let path = output_path.to_string_lossy();
     let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
-    let escaped_path = path.replace('\'', "''");
-    format!(
-        "powershell -NoProfile -Command \"[IO.File]::WriteAllText('{escaped_path}', [Console]::In.ReadToEnd(), (New-Object Text.UTF8Encoding $false))\""
-    )
+    let escaped_path = path.replace('"', "\"\"");
+    format!(r#"findstr /R "^" > "{escaped_path}""#)
 }
 
 #[test]
