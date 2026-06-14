@@ -18,7 +18,7 @@ fn stdin_capture_command(output_path: &Path) -> String {
 fn stdin_capture_command(output_path: &Path) -> String {
     let escaped_path = output_path.to_string_lossy().replace('\'', "''");
     format!(
-        "powershell -NoProfile -Command \"$input = [Console]::In.ReadToEnd(); [IO.File]::WriteAllText('{escaped_path}', $input, [Text.UTF8Encoding]::new($false))\""
+        "pwsh -NoProfile -NonInteractive -Command \"$data = [Console]::In.ReadToEnd(); [IO.File]::WriteAllText('{escaped_path}', $data, [System.Text.UTF8Encoding]::new($false))\""
     )
 }
 
