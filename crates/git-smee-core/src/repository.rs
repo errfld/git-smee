@@ -688,7 +688,6 @@ mod tests {
 
     #[test]
     fn given_git_path_output_with_trailing_space_when_resolving_then_space_is_preserved() {
-        let _guard = process_state_lock();
         let temp_dir = TempDir::new().unwrap();
         git(temp_dir.path(), &["init"]);
         git(temp_dir.path(), &["config", "core.hooksPath", ".githooks "]);
