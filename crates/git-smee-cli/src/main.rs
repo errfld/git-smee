@@ -1,5 +1,6 @@
 use std::{
     env,
+    io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -10,6 +11,8 @@ use git_smee_core::{
     installer::{self, HookInstaller, HookScriptOptions},
     repository,
 };
+
+const MAX_HOOK_STDIN_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(clap::Parser)]
 #[command(name = "git-smee")]
@@ -76,9 +79,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Run { hook, hook_args } => {
             repository::ensure_in_repo_root()?;
+            let stdin_payload = read_hook_stdin()?;
             let config = read_config_file(&config_path)?;
             let phase = config::LifeCyclePhase::from_str(&hook)?;
-            executor::execute_hook_with_args(&config, phase, &hook_args)?;
+            executor::execute_hook_with_args_and_stdin(
+                &config,
+                phase,
+                &hook_args,
+                stdin_payload.as_deref(),
+            )?;
             Ok(())
         }
         Command::Initialize { force } => {
@@ -120,6 +129,26 @@ fn normalize_user_config_path(path: PathBuf, invocation_dir: &Path) -> PathBuf {
     } else {
         invocation_dir.join(path)
     }
+}
+
+fn read_hook_stdin() -> io::Result<Option<Vec<u8>>> {
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        return Ok(None);
+    }
+
+    let mut payload = Vec::with_capacity(MAX_HOOK_STDIN_BYTES as usize);
+    stdin
+        .lock()
+        .take(MAX_HOOK_STDIN_BYTES + 1)
+        .read_to_end(&mut payload)?;
+    if payload.len() as u64 > MAX_HOOK_STDIN_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("hook stdin exceeds the {MAX_HOOK_STDIN_BYTES} byte limit"),
+        ));
+    }
+    Ok(Some(payload))
 }
 
 #[cfg(unix)]

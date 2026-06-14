@@ -1,12 +1,25 @@
-use std::{fs, process::Command};
+use std::{fs, path::Path};
 
+use assert_cmd::Command;
 use assert_cmd::cargo;
-use assert_cmd::prelude::*;
 use assert_fs::TempDir;
 use git_smee_core::config::LifeCyclePhase;
 use git_smee_core::installer::MANAGED_FILE_MARKER;
 use predicates::prelude::*;
 mod common;
+
+#[cfg(unix)]
+fn stdin_capture_command(output_path: &Path) -> String {
+    let escaped_path = output_path.to_string_lossy().replace('\'', "'\"'\"'");
+    format!("cat > '{escaped_path}'")
+}
+
+#[cfg(windows)]
+fn stdin_capture_command(output_path: &Path) -> String {
+    let path = output_path.to_string_lossy();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+    format!("findstr /R . > {path}")
+}
 
 #[test]
 fn given_git_smee_when_help_then_success() {
@@ -770,6 +783,47 @@ fn given_hook_args_when_running_then_command_receives_env_arg_contract() {
         .args(["run", "commit-msg", "alpha", "beta"])
         .assert()
         .success();
+}
+
+#[test]
+fn given_stdin_driven_hook_with_multiple_commands_when_running_then_each_command_receives_same_input()
+ {
+    let test_repo = common::TestRepo::default();
+    let first_output = test_repo.path.join("first-stdin.txt");
+    let second_output = test_repo.path.join("second-stdin.txt");
+    let first_command = stdin_capture_command(&first_output);
+    let second_command = stdin_capture_command(&second_output);
+    test_repo.write_config(&format!(
+        "[[pre-push]]\ncommand = {first_command:?}\n\n[[pre-push]]\ncommand = {second_command:?}\n"
+    ));
+
+    let stdin_payload = "refs/heads/main 123 refs/remotes/origin/main 456\nrefs/heads/feature abc refs/remotes/origin/feature def\n";
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-push"])
+        .write_stdin(stdin_payload)
+        .assert()
+        .success();
+
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(first_output).unwrap()),
+        stdin_payload
+    );
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(second_output).unwrap()),
+        stdin_payload
+    );
+}
+
+#[cfg(windows)]
+fn normalize_test_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n")
+}
+
+#[cfg(not(windows))]
+fn normalize_test_newlines(value: &str) -> String {
+    value.to_string()
 }
 
 #[test]
