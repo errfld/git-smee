@@ -1,4 +1,9 @@
-use std::{env, io::Write, process::Stdio};
+use std::{
+    env,
+    io::{self, ErrorKind, Write},
+    process::Stdio,
+    thread,
+};
 
 #[cfg(windows)]
 use std::path::PathBuf;
@@ -142,18 +147,29 @@ impl CommandRunner for PlatformCommandRunner<'_> {
         }
 
         let mut child = shell_command.spawn()?;
-        let stdin_result = if let Some(stdin_payload) = stdin_payload {
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(stdin_payload)
-            } else {
-                Ok(())
-            }
+        if let Some(stdin_payload) = stdin_payload {
+            let Some(mut stdin) = child.stdin.take() else {
+                return child.wait().map(|status| status.code());
+            };
+            let stdin_payload = stdin_payload.to_vec();
+            let stdin_writer = thread::spawn(move || {
+                match stdin.write_all(&stdin_payload) {
+                    // Hook commands are allowed to ignore or close stdin early. If the
+                    // command exits successfully, a broken pipe while replaying the
+                    // buffered hook payload should not fail the hook run.
+                    Err(error) if error.kind() == ErrorKind::BrokenPipe => Ok(()),
+                    result => result,
+                }
+            });
+            let wait_result = child.wait().map(|status| status.code());
+            let stdin_result = stdin_writer
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("stdin writer thread panicked")));
+            stdin_result?;
+            wait_result
         } else {
-            Ok(())
-        };
-        let wait_result = child.wait().map(|status| status.code());
-        stdin_result?;
-        wait_result
+            child.wait().map(|status| status.code())
+        }
     }
 
     fn shell_display(&self) -> &'static str {

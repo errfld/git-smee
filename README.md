@@ -193,7 +193,12 @@ On all platforms, git-smee also exports forwarded hook args as environment varia
 When `git smee run` receives stdin, it buffers that payload once and replays identical bytes to
 each configured command for the hook. This keeps stdin-driven hooks such as `pre-push`,
 `pre-receive`, and `post-receive` deterministic even when multiple commands are configured for
-the same phase.
+the same phase. The default buffered-stdin limit is 10 MiB; set
+`GIT_SMEE_HOOK_STDIN_LIMIT_BYTES=<bytes>` to raise or lower it for unusually large hooks.
+
+`proc-receive` is an interactive pkt-line protocol, so git-smee does not pre-buffer stdin for
+that phase. The configured `proc-receive` command inherits stdin directly to avoid blocking the
+protocol handshake before the command starts.
 
 ## CLI Commands
 

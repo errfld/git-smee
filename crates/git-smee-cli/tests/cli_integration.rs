@@ -816,6 +816,58 @@ fn given_stdin_driven_hook_with_multiple_commands_when_running_then_each_command
     );
 }
 
+#[test]
+fn given_oversized_hook_stdin_when_running_then_cli_rejects_with_clear_error() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config("[[pre-push]]\ncommand = \"true\"\n");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .env("GIT_SMEE_HOOK_STDIN_LIMIT_BYTES", "4")
+        .args(["run", "pre-push"])
+        .write_stdin("abcde")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "hook stdin exceeds the 4 bytes limit",
+        ));
+}
+
+#[test]
+fn given_hook_command_ignores_large_stdin_when_running_then_hook_succeeds() {
+    let test_repo = common::TestRepo::default();
+    let command = if cfg!(windows) { "exit /b 0" } else { "true" };
+    test_repo.write_config(&format!("[[pre-push]]\ncommand = {command:?}\n"));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-push"])
+        .write_stdin(vec![b'x'; 128 * 1024])
+        .assert()
+        .success();
+}
+
+#[test]
+fn given_proc_receive_hook_when_running_then_stdin_is_inherited_by_command() {
+    let test_repo = common::TestRepo::default();
+    let output = test_repo.path.join("proc-receive-stdin.txt");
+    let command = stdin_capture_command(&output);
+    test_repo.write_config(&format!("[[proc-receive]]\ncommand = {command:?}\n"));
+    let stdin_payload = "version=1\0push-options\n0000\n";
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "proc-receive"])
+        .write_stdin(stdin_payload)
+        .assert()
+        .success();
+
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(output).unwrap()),
+        stdin_payload
+    );
+}
+
 #[cfg(windows)]
 fn normalize_test_newlines(value: &str) -> String {
     value.replace("\r\n", "\n")
