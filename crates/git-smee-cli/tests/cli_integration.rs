@@ -16,10 +16,8 @@ fn stdin_capture_command(output_path: &Path) -> String {
 
 #[cfg(windows)]
 fn stdin_capture_command(output_path: &Path) -> String {
-    let escaped_path = output_path.to_string_lossy().replace('\'', "''");
-    format!(
-        "pwsh -NoProfile -NonInteractive -Command \"$data = [Console]::In.ReadToEnd(); [IO.File]::WriteAllText('{escaped_path}', $data, [System.Text.UTF8Encoding]::new($false))\""
-    )
+    let escaped_path = output_path.to_string_lossy().replace('"', "\"\"");
+    format!("more > \"{escaped_path}\"")
 }
 
 #[test]
@@ -807,8 +805,24 @@ fn given_stdin_driven_hook_with_multiple_commands_when_running_then_each_command
         .assert()
         .success();
 
-    assert_eq!(fs::read_to_string(first_output).unwrap(), stdin_payload);
-    assert_eq!(fs::read_to_string(second_output).unwrap(), stdin_payload);
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(first_output).unwrap()),
+        stdin_payload
+    );
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(second_output).unwrap()),
+        stdin_payload
+    );
+}
+
+#[cfg(windows)]
+fn normalize_test_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n")
+}
+
+#[cfg(not(windows))]
+fn normalize_test_newlines(value: &str) -> String {
+    value.to_string()
 }
 
 #[test]
