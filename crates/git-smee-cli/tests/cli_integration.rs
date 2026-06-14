@@ -16,7 +16,9 @@ fn stdin_capture_command(output_path: &Path) -> String {
 
 #[cfg(windows)]
 fn stdin_capture_command(output_path: &Path) -> String {
-    let escaped_path = output_path.to_string_lossy().replace('"', "\"\"");
+    let path = output_path.to_string_lossy();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+    let escaped_path = path.replace('"', "\"\"");
     format!("more > \"{escaped_path}\"")
 }
 
