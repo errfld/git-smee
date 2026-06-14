@@ -283,7 +283,7 @@ pub fn resolve_git_path(repository_root: &Path, git_path: &str) -> Result<PathBu
         });
     }
 
-    let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let raw_path = trim_git_output_path(&output.stdout);
     if raw_path.is_empty() {
         return Err(Error::EmptyGitPath {
             repository_root: repository_root.display().to_string(),
@@ -291,11 +291,31 @@ pub fn resolve_git_path(repository_root: &Path, git_path: &str) -> Result<PathBu
         });
     }
 
-    let path = PathBuf::from(raw_path);
+    let path = git_output_path_to_path_buf(raw_path, git_path)?;
     if path.is_absolute() {
         Ok(path)
     } else {
         Ok(repository_root.join(path))
+    }
+}
+
+#[cfg_attr(unix, allow(unused_variables))]
+fn git_output_path_to_path_buf(bytes: &[u8], flag: &str) -> Result<PathBuf, Error> {
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let value =
+            String::from_utf8(bytes.to_vec()).map_err(|_| Error::InvalidGitPathEncoding {
+                flag: flag.to_string(),
+            })?;
+        Ok(PathBuf::from(value))
     }
 }
 
@@ -665,6 +685,31 @@ mod tests {
     #[test]
     fn given_git_output_with_trailing_space_when_trimming_then_space_is_preserved() {
         assert_eq!(trim_git_output_path(b"/repo/path \n"), b"/repo/path ");
+    }
+
+    #[test]
+    fn given_git_path_output_with_trailing_space_when_resolving_then_space_is_preserved() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        git(temp_dir.path(), &["config", "core.hooksPath", ".githooks "]);
+
+        let resolved = resolve_git_path(temp_dir.path(), "hooks").unwrap();
+
+        assert_eq!(
+            normalize_path_for_compare(&resolved),
+            normalize_path_for_compare(&temp_dir.path().join(".githooks "))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn given_non_utf8_git_path_output_when_decoding_then_bytes_are_preserved() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = git_output_path_to_path_buf(b".git/hooks-\xFF", "hooks").unwrap();
+
+        assert_eq!(path.as_os_str().as_bytes(), b".git/hooks-\xFF");
     }
 
     fn git(repo: &Path, args: &[&str]) {
