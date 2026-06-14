@@ -18,8 +18,10 @@ fn stdin_capture_command(output_path: &Path) -> String {
 fn stdin_capture_command(output_path: &Path) -> String {
     let path = output_path.to_string_lossy();
     let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
-    let escaped_path = path.replace('"', "\"\"");
-    format!("more > \"{escaped_path}\"")
+    let escaped_path = path.replace('\'', "''");
+    format!(
+        "powershell -NoProfile -Command \"$inputStream=[Console]::OpenStandardInput(); $outputStream=[IO.File]::Create('{escaped_path}'); try {{ $inputStream.CopyTo($outputStream) }} finally {{ $outputStream.Dispose() }}\""
+    )
 }
 
 #[test]
