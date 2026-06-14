@@ -12,6 +12,8 @@ use git_smee_core::{
     repository,
 };
 
+const MAX_HOOK_STDIN_BYTES: u64 = 10 * 1024 * 1024;
+
 #[derive(clap::Parser)]
 #[command(name = "git-smee")]
 #[command(about = "🏴‍☠️ Smee - the right hand of (Git) hooks", long_about = None)]
@@ -135,8 +137,17 @@ fn read_hook_stdin() -> io::Result<Option<Vec<u8>>> {
         return Ok(None);
     }
 
-    let mut payload = Vec::new();
-    stdin.lock().read_to_end(&mut payload)?;
+    let mut payload = Vec::with_capacity(MAX_HOOK_STDIN_BYTES as usize);
+    stdin
+        .lock()
+        .take(MAX_HOOK_STDIN_BYTES + 1)
+        .read_to_end(&mut payload)?;
+    if payload.len() as u64 > MAX_HOOK_STDIN_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("hook stdin exceeds the {MAX_HOOK_STDIN_BYTES} byte limit"),
+        ));
+    }
     Ok(Some(payload))
 }
 

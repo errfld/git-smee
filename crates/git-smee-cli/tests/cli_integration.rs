@@ -11,13 +11,15 @@ mod common;
 #[cfg(unix)]
 fn stdin_capture_command(output_path: &Path) -> String {
     let escaped_path = output_path.to_string_lossy().replace('\'', "'\"'\"'");
-    format!("IFS= read -r GIT_SMEE_INPUT && printf %s \"$GIT_SMEE_INPUT\" > '{escaped_path}'")
+    format!("cat > '{escaped_path}'")
 }
 
 #[cfg(windows)]
 fn stdin_capture_command(output_path: &Path) -> String {
-    let escaped_path = output_path.to_string_lossy().replace('"', "\"\"");
-    format!("set /p GIT_SMEE_INPUT= && > \"{escaped_path}\" <nul set /p =%GIT_SMEE_INPUT%")
+    let escaped_path = output_path.to_string_lossy().replace('\'', "''");
+    format!(
+        "powershell -NoProfile -Command \"$input = [Console]::In.ReadToEnd(); [IO.File]::WriteAllText('{escaped_path}', $input, [Text.UTF8Encoding]::new($false))\""
+    )
 }
 
 #[test]
@@ -641,12 +643,12 @@ fn given_stdin_driven_hook_with_multiple_commands_when_running_then_each_command
         "[[pre-push]]\ncommand = {first_command:?}\n\n[[pre-push]]\ncommand = {second_command:?}\n"
     ));
 
-    let stdin_payload = "refs/heads/main 123 refs/remotes/origin/main 456";
+    let stdin_payload = "refs/heads/main 123 refs/remotes/origin/main 456\nrefs/heads/feature abc refs/remotes/origin/feature def\n";
 
     let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
     cmd.current_dir(&test_repo.path)
         .args(["run", "pre-push"])
-        .write_stdin(format!("{stdin_payload}\n"))
+        .write_stdin(stdin_payload)
         .assert()
         .success();
 

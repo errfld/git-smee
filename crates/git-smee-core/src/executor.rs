@@ -137,12 +137,18 @@ impl CommandRunner for PlatformCommandRunner<'_> {
         }
 
         let mut child = shell_command.spawn()?;
-        if let Some(stdin_payload) = stdin_payload
-            && let Some(mut stdin) = child.stdin.take()
-        {
-            stdin.write_all(stdin_payload)?;
-        }
-        child.wait().map(|status| status.code())
+        let stdin_result = if let Some(stdin_payload) = stdin_payload {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(stdin_payload)
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        };
+        let wait_result = child.wait().map(|status| status.code());
+        stdin_result?;
+        wait_result
     }
 
     fn shell_display(&self) -> &'static str {
