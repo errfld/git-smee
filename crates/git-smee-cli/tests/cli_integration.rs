@@ -853,7 +853,7 @@ fn given_proc_receive_hook_when_running_then_stdin_is_inherited_by_command() {
     let output = test_repo.path.join("proc-receive-stdin.txt");
     let command = stdin_capture_command(&output);
     test_repo.write_config(&format!("[[proc-receive]]\ncommand = {command:?}\n"));
-    let stdin_payload = "version=1\0push-options\n0000";
+    let stdin_payload = "version=1\0push-options\n0000\n";
 
     let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
     cmd.current_dir(&test_repo.path)
