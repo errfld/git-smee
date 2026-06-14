@@ -83,16 +83,16 @@ jobs:
         run: "cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::"
 
   msrv-build-and-test:
-    name: Build & test (MSRV 1.85.0)
+    name: Build & test (MSRV 1.88.0)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install Rust (1.85.0)
+      - name: Install Rust (1.88.0)
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
-          toolchain: 1.85.0
+          toolchain: 1.88.0
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2

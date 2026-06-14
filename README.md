@@ -32,7 +32,7 @@ The Homebrew tap currently publishes the Apple Silicon (`aarch64-apple-darwin`) 
 cargo install git-smee-cli
 ```
 
-The minimum supported Rust version is `1.85.0`.
+The minimum supported Rust version is `1.88.0`.
 
 ### From source
 
@@ -263,7 +263,7 @@ rustup run stable cargo llvm-cov --workspace --all-features --locked --summary-o
 cargo audit
 ```
 
-GitHub Actions CI validates Linux (stable/beta/nightly), macOS (stable), Windows (stable), and MSRV (`1.85.0`) build/test compatibility.
+GitHub Actions CI validates Linux (stable/beta/nightly), macOS (stable), Windows (stable), and MSRV (`1.88.0`) build/test compatibility.
 
 Release archives publish adjacent `.sha256` files. Verify downloads with:
 
