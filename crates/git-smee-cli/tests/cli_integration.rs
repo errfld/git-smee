@@ -20,7 +20,7 @@ fn stdin_capture_command(output_path: &Path) -> String {
     let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
     let escaped_path = path.replace('\'', "''");
     format!(
-        "powershell -NoProfile -Command \"$inputStream=[Console]::OpenStandardInput(); $outputStream=[IO.File]::Create('{escaped_path}'); try {{ $inputStream.CopyTo($outputStream) }} finally {{ $outputStream.Dispose() }}\""
+        "powershell -NoProfile -Command \"[IO.File]::WriteAllText('{escaped_path}', [Console]::In.ReadToEnd(), (New-Object Text.UTF8Encoding $false))\""
     )
 }
 
