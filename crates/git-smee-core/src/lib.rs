@@ -10,4 +10,6 @@ pub use crate::repository::{ensure_in_repo_root, find_git_root};
 
 pub const DEFAULT_CONFIG_FILE_NAME: &str = ".git-smee.toml";
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests {}
