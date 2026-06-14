@@ -356,11 +356,9 @@ mod tests {
     use assert2::assert;
     use proptest::prelude::*;
 
-    use crate::config::HookDefinition;
+    use crate::{config::HookDefinition, test_support::process_state_lock};
 
     use super::*;
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     enum PlannedResult {
         Exit(Option<i32>),
@@ -541,8 +539,8 @@ mod tests {
 
     #[test]
     fn given_mixed_case_hook_arg_env_when_applying_then_existing_entries_are_removed() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        let _guard = process_state_lock();
+        // SAFETY: test serializes process environment mutation via process_state_lock.
         unsafe {
             env::set_var("Git_Smee_Hook_Arg_2", "stale");
             env::set_var("GIT_SMEE_HOOK_ARGC", "7");
@@ -571,7 +569,7 @@ mod tests {
             key == "GIT_SMEE_HOOK_ARG_2" && value.as_ref() == Some(&OsString::from("beta"))
         }));
 
-        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        // SAFETY: test serializes process environment mutation via process_state_lock.
         unsafe {
             env::remove_var("Git_Smee_Hook_Arg_2");
             env::remove_var("GIT_SMEE_HOOK_ARGC");
@@ -580,8 +578,8 @@ mod tests {
 
     #[test]
     fn given_user_prefixed_hook_arg_env_when_applying_then_unrelated_entries_are_preserved() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        let _guard = process_state_lock();
+        // SAFETY: test serializes process environment mutation via process_state_lock.
         unsafe {
             env::set_var("GIT_SMEE_HOOK_ARGS_FILE", "user-owned");
             env::set_var("GIT_SMEE_HOOK_ARGUMENT_MODE", "strict");
@@ -612,7 +610,7 @@ mod tests {
                 .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARG_2" && value.is_none() })
         );
 
-        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        // SAFETY: test serializes process environment mutation via process_state_lock.
         unsafe {
             env::remove_var("GIT_SMEE_HOOK_ARGS_FILE");
             env::remove_var("GIT_SMEE_HOOK_ARGUMENT_MODE");
@@ -635,7 +633,7 @@ mod tests {
 
     #[test]
     fn given_empty_hook_args_when_applying_then_argc_is_zero_and_no_indexed_args_are_added() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = process_state_lock();
         let mut command = Command::new("echo");
 
         apply_hook_arg_env(&mut command, &[]);

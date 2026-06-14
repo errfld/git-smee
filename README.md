@@ -277,6 +277,8 @@ cargo audit
 
 GitHub Actions CI validates Linux (stable/beta/nightly), macOS (stable), Windows (stable), and MSRV (`1.88.0`) build/test compatibility.
 
+Tests that mutate process-global state (environment variables or the current working directory) must hold the shared `process_state_lock` test helper for the entire setup/exercise/restore window. Do not add module-local env/cwd mutexes: Rust 2024 treats environment mutation as unsafe unless all process-wide access is externally synchronized.
+
 Release archives publish adjacent `.sha256` files. Verify downloads with:
 
 ```bash
