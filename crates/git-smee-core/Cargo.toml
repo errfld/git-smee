@@ -2,6 +2,7 @@
 name = "git-smee-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 toml = { version = "0.9" }
