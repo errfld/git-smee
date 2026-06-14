@@ -134,6 +134,7 @@ fn given_non_directory_custom_hooks_path_when_creating_installer_then_error_incl
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn given_custom_hooks_path_with_trailing_space_when_installing_then_space_is_preserved() {
     let temp_dir = tempfile::tempdir().unwrap();
