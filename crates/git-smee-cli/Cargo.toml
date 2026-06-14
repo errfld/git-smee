@@ -16,4 +16,4 @@ assert_cmd = "2.1"
 assert_fs = "1.1"
 predicates = "3.1"
 tempfile = "3"
-git2 = "0.20"
+git2 = { version = "0.20", features = ["vendored-openssl"] }

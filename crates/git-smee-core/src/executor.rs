@@ -1,5 +1,8 @@
 use std::{env, io::Write, process::Stdio};
 
+#[cfg(windows)]
+use std::path::PathBuf;
+
 use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::*;
 use thiserror::Error;
@@ -133,6 +136,11 @@ impl CommandRunner for PlatformCommandRunner<'_> {
             shell_command.stdin(Stdio::piped());
         }
 
+        #[cfg(windows)]
+        if let Some(current_dir) = cmd_compatible_current_dir()? {
+            shell_command.current_dir(current_dir);
+        }
+
         let mut child = shell_command.spawn()?;
         let stdin_result = if let Some(stdin_payload) = stdin_payload {
             if let Some(mut stdin) = child.stdin.take() {
@@ -167,6 +175,13 @@ fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[St
     for (index, arg) in hook_args.iter().enumerate() {
         shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
     }
+}
+
+#[cfg(windows)]
+fn cmd_compatible_current_dir() -> Result<Option<PathBuf>, std::io::Error> {
+    let current_dir = env::current_dir()?;
+    let current_dir = current_dir.to_string_lossy();
+    Ok(current_dir.strip_prefix(r"\\?\").map(PathBuf::from))
 }
 
 fn is_hook_arg_env_key(key: &str) -> bool {
