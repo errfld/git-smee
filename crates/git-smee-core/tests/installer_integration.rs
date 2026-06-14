@@ -96,11 +96,29 @@ fn given_worktree_when_installing_hooks_then_hooks_are_written_to_git_effective_
 }
 
 #[test]
-fn given_missing_custom_hooks_path_when_creating_installer_then_error_includes_resolved_path() {
+fn given_missing_custom_hooks_path_when_creating_installer_then_directory_is_created() {
     let temp_dir = tempfile::tempdir().unwrap();
     let repo = temp_dir.path().join("repo");
     init_repo(&repo);
     git(&repo, &["config", "core.hooksPath", ".missing-hooks"]);
+
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+
+    assert!(repo.join(".missing-hooks").is_dir());
+    assert_eq!(
+        normalize_path_for_compare(installer.effective_hooks_dir()),
+        normalize_path_for_compare(&repo.join(".missing-hooks"))
+    );
+}
+
+#[test]
+fn given_non_directory_custom_hooks_path_when_creating_installer_then_error_includes_resolved_path()
+{
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    git(&repo, &["config", "core.hooksPath", ".not-a-directory"]);
+    fs::write(repo.join(".not-a-directory"), "not a directory").unwrap();
 
     let result = FileSystemHookInstaller::from_path(repo.clone());
 
@@ -108,12 +126,34 @@ fn given_missing_custom_hooks_path_when_creating_installer_then_error_includes_r
         Err(Error::HooksDirNotFound(path)) => {
             assert_eq!(
                 normalize_path_for_compare(&PathBuf::from(path)),
-                normalize_path_for_compare(&repo.join(".missing-hooks"))
+                normalize_path_for_compare(&repo.join(".not-a-directory"))
             )
         }
         Ok(_) => panic!("expected hooks-dir-not-found error"),
         Err(error) => panic!("unexpected error: {error}"),
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn given_custom_hooks_path_with_trailing_space_when_installing_then_space_is_preserved() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+    git(&repo, &["config", "core.hooksPath", ".githooks "]);
+    fs::create_dir(repo.join(".githooks ")).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+
+    installer::install_hooks(&config, &installer).unwrap();
+
+    assert!(repo.join(".githooks ").join("pre-commit").exists());
+    assert_eq!(
+        normalize_path_for_compare(installer.effective_hooks_dir()),
+        normalize_path_for_compare(&repo.join(".githooks "))
+    );
 }
 
 #[test]

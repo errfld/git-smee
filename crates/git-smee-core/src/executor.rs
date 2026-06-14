@@ -1,7 +1,7 @@
-use rayon::prelude::*;
+use std::{env, io::Write, process::Stdio};
 
 use rayon::iter::IntoParallelRefIterator;
-use std::{io::Write, process::Stdio};
+use rayon::prelude::*;
 use thiserror::Error;
 
 use crate::{
@@ -121,10 +121,7 @@ impl CommandRunner for PlatformCommandRunner<'_> {
     ) -> Result<Option<i32>, std::io::Error> {
         let mut shell_command = self.platform.create_command();
         shell_command.arg(command);
-        shell_command.env("GIT_SMEE_HOOK_ARGC", hook_args.len().to_string());
-        for (index, arg) in hook_args.iter().enumerate() {
-            shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
-        }
+        apply_hook_arg_env(&mut shell_command, hook_args);
         match self.platform {
             Platform::Unix => {
                 shell_command.arg("--");
@@ -154,6 +151,38 @@ impl CommandRunner for PlatformCommandRunner<'_> {
     fn shell_display(&self) -> &'static str {
         self.platform.shell_display()
     }
+}
+
+fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[String]) {
+    for (key, _) in env::vars_os() {
+        if is_hook_arg_env_key(&key.to_string_lossy()) {
+            #[cfg(windows)]
+            shell_command.env_remove(key.to_string_lossy().to_ascii_uppercase());
+            #[cfg(not(windows))]
+            shell_command.env_remove(key);
+        }
+    }
+
+    shell_command.env("GIT_SMEE_HOOK_ARGC", hook_args.len().to_string());
+    for (index, arg) in hook_args.iter().enumerate() {
+        shell_command.env(format!("GIT_SMEE_HOOK_ARG_{}", index + 1), arg);
+    }
+}
+
+fn is_hook_arg_env_key(key: &str) -> bool {
+    if key.eq_ignore_ascii_case("GIT_SMEE_HOOK_ARGC") {
+        return true;
+    }
+
+    let prefix = "GIT_SMEE_HOOK_ARG_";
+    let Some(prefix_part) = key.get(..prefix.len()) else {
+        return false;
+    };
+    if !prefix_part.eq_ignore_ascii_case(prefix) {
+        return false;
+    }
+    let suffix = &key[prefix.len()..];
+    !suffix.is_empty() && !suffix.starts_with('0') && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn run_hooks_with_runner<R: CommandRunner>(
@@ -287,8 +316,10 @@ fn tokenize_command(command: &str) -> Vec<String> {
 mod tests {
     use std::{
         collections::{HashMap, VecDeque},
+        ffi::OsString,
         io,
-        sync::Mutex,
+        process::Command,
+        sync::{Arc, Barrier, Mutex},
     };
 
     use assert2::assert;
@@ -298,9 +329,12 @@ mod tests {
 
     use super::*;
 
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
     enum PlannedResult {
         Exit(Option<i32>),
         SpawnError(io::ErrorKind),
+        Barrier(Arc<Barrier>, Option<i32>),
     }
 
     #[derive(Default)]
@@ -361,19 +395,25 @@ mod tests {
             hook_args: &[String],
             stdin_payload: Option<&[u8]>,
         ) -> Result<Option<i32>, io::Error> {
-            let mut state = self.state.lock().unwrap();
-            state.calls.push(command.to_string());
-            state.hook_args_calls.push(hook_args.to_vec());
-            state.stdin_calls.push(stdin_payload.map(Vec::from));
-            let outcome = state
-                .outcomes_by_command
-                .get_mut(command)
-                .and_then(VecDeque::pop_front)
-                .or_else(|| state.default_outcomes.pop_front())
-                .unwrap_or_else(|| panic!("no fake outcome configured for command '{command}'"));
+            let outcome = {
+                let mut state = self.state.lock().unwrap();
+                state.calls.push(command.to_string());
+                state.hook_args_calls.push(hook_args.to_vec());
+                state.stdin_calls.push(stdin_payload.map(Vec::from));
+                state
+                    .outcomes_by_command
+                    .get_mut(command)
+                    .and_then(VecDeque::pop_front)
+                    .or_else(|| state.default_outcomes.pop_front())
+                    .unwrap_or_else(|| panic!("no fake outcome configured for command '{command}'"))
+            };
             match outcome {
                 PlannedResult::Exit(code) => Ok(code),
                 PlannedResult::SpawnError(kind) => Err(io::Error::new(kind, "spawn failed")),
+                PlannedResult::Barrier(barrier, code) => {
+                    barrier.wait();
+                    Ok(code)
+                }
             }
         }
 
@@ -466,6 +506,122 @@ mod tests {
             runner.stdin_calls(),
             vec![Some(stdin_payload.to_vec()), Some(stdin_payload.to_vec()),]
         );
+    }
+
+    #[test]
+    fn given_mixed_case_hook_arg_env_when_applying_then_existing_entries_are_removed() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::set_var("Git_Smee_Hook_Arg_2", "stale");
+            env::set_var("GIT_SMEE_HOOK_ARGC", "7");
+        }
+
+        let mut command = Command::new("echo");
+        let hook_args = vec!["alpha".to_string(), "beta".to_string()];
+        apply_hook_arg_env(&mut command, &hook_args);
+
+        let envs: Vec<(OsString, Option<OsString>)> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
+            .collect();
+
+        assert!(!envs.iter().any(|(key, value)| {
+            is_hook_arg_env_key(&key.to_string_lossy())
+                && value.as_ref() == Some(&OsString::from("stale"))
+        }));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("2"))
+        }));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARG_1" && value.as_ref() == Some(&OsString::from("alpha"))
+        }));
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARG_2" && value.as_ref() == Some(&OsString::from("beta"))
+        }));
+
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::remove_var("Git_Smee_Hook_Arg_2");
+            env::remove_var("GIT_SMEE_HOOK_ARGC");
+        }
+    }
+
+    #[test]
+    fn given_user_prefixed_hook_arg_env_when_applying_then_unrelated_entries_are_preserved() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::set_var("GIT_SMEE_HOOK_ARGS_FILE", "user-owned");
+            env::set_var("GIT_SMEE_HOOK_ARGUMENT_MODE", "strict");
+            env::set_var("GIT_SMEE_HOOK_ARG_2", "stale");
+        }
+
+        let mut command = Command::new("echo");
+        let hook_args = vec!["fresh".to_string()];
+        apply_hook_arg_env(&mut command, &hook_args);
+
+        let envs: Vec<(OsString, Option<OsString>)> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
+            .collect();
+
+        assert!(
+            !envs
+                .iter()
+                .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARGS_FILE" && value.is_none() })
+        );
+        assert!(
+            !envs
+                .iter()
+                .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARGUMENT_MODE" && value.is_none() })
+        );
+        assert!(
+            envs.iter()
+                .any(|(key, value)| { key == "GIT_SMEE_HOOK_ARG_2" && value.is_none() })
+        );
+
+        // SAFETY: test serializes process environment mutation via ENV_MUTEX.
+        unsafe {
+            env::remove_var("GIT_SMEE_HOOK_ARGS_FILE");
+            env::remove_var("GIT_SMEE_HOOK_ARGUMENT_MODE");
+            env::remove_var("GIT_SMEE_HOOK_ARG_2");
+        }
+    }
+
+    #[test]
+    fn given_hook_arg_contract_keys_when_matching_then_only_argc_and_numbered_args_match() {
+        assert!(is_hook_arg_env_key("GIT_SMEE_HOOK_ARGC"));
+        assert!(is_hook_arg_env_key("git_smee_hook_arg_12"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_0"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_01"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARG_0x1"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARGS_FILE"));
+        assert!(!is_hook_arg_env_key("GIT_SMEE_HOOK_ARGUMENT_MODE"));
+    }
+
+    #[test]
+    fn given_empty_hook_args_when_applying_then_argc_is_zero_and_no_indexed_args_are_added() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let mut command = Command::new("echo");
+
+        apply_hook_arg_env(&mut command, &[]);
+
+        let envs: Vec<(OsString, Option<OsString>)> = command
+            .get_envs()
+            .map(|(key, value)| (key.to_os_string(), value.map(OsString::from)))
+            .collect();
+
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_SMEE_HOOK_ARGC" && value.as_ref() == Some(&OsString::from("0"))
+        }));
+        assert!(!envs.iter().any(|(key, value)| {
+            value.is_some()
+                && is_hook_arg_env_key(&key.to_string_lossy())
+                && key != "GIT_SMEE_HOOK_ARGC"
+        }));
     }
 
     #[test]
@@ -727,7 +883,8 @@ mod tests {
     }
 
     #[test]
-    fn given_failed_parallel_hook_when_executing_then_error_is_propagated() {
+    fn given_failed_parallel_hook_when_executing_then_in_flight_parallel_hooks_may_complete() {
+        let barrier = Arc::new(Barrier::new(2));
         let hooks = vec![
             HookDefinition {
                 command: "sequential".to_string(),
@@ -744,15 +901,26 @@ mod tests {
         ];
         let runner = FakeRunner::with_command_outcomes(vec![
             ("sequential", vec![PlannedResult::Exit(Some(0))]),
-            ("parallel-ok", vec![PlannedResult::Exit(Some(0))]),
-            ("parallel-fail", vec![PlannedResult::Exit(Some(23))]),
+            (
+                "parallel-ok",
+                vec![PlannedResult::Barrier(barrier.clone(), Some(0))],
+            ),
+            (
+                "parallel-fail",
+                vec![PlannedResult::Barrier(barrier.clone(), Some(23))],
+            ),
         ]);
 
-        let result = run_hooks_with_runner(&hooks, &runner, &[], None);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .expect("test thread pool should build");
+        let result = pool.install(|| run_hooks_with_runner(&hooks, &runner, &[], None));
         let calls = runner.calls();
 
         assert!(matches!(result, Err(Error::ExecutionFailed(23))));
         assert_eq!(calls[0], "sequential");
+        assert!(calls.iter().any(|call| call == "parallel-ok"));
         assert!(calls.iter().any(|call| call == "parallel-fail"));
     }
 

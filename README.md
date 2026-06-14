@@ -70,6 +70,8 @@ cargo install --path crates/git-smee-cli
 
    By default, `install` only overwrites hook files previously managed by git-smee.
    Existing unmanaged hook files are preserved unless you pass `--force`.
+   If the repository uses `core.hooksPath` and that directory does not exist yet,
+   `install` creates the effective hooks directory before writing managed wrappers.
 
 That's it! Your hooks are now active. When Git triggers a hook, the installed wrapper runs the `git-smee` executable directly and executes the configured commands in order.
 
@@ -114,7 +116,7 @@ When running hooks, git-smee executes commands in two phases:
 1. **Sequential phase**: All commands with `parallel_execution_allowed = false` (or omitted) run one at a time, in the order they appear in the config.
 2. **Parallel phase**: All commands with `parallel_execution_allowed = true` run concurrently using a thread pool.
 
-Sequential commands always complete before parallel commands begin. If any command fails, execution stops immediately (fail-fast behavior).
+Sequential commands always complete before parallel commands begin. If any sequential command fails, execution stops immediately. For parallel commands, the first failing command causes the overall run to fail, but commands that are already in flight may still finish.
 
 **Example:**
 

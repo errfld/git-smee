@@ -54,6 +54,12 @@ pub enum Error {
     NotImplemented,
     #[error("Hooks directory not found: {0}")]
     HooksDirNotFound(String),
+    #[error("Failed to create hooks directory '{path}': {source}")]
+    FailedToCreateHooksDir {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("No hooks present in the configuration to install")]
     NoHooksPresent,
     #[error("Failed to write hook '{path}': {source}")]
@@ -97,6 +103,8 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("The specified configuration path exists but is not a regular file: {path}")]
+    ConfigPathNotAFile { path: String },
     #[error("Failed to resolve current executable path: {0}")]
     FailedToResolveCurrentExecutable(std::io::Error),
     #[error("Unsupported managed header prefix '{prefix}'. Expected '#' or 'REM'.")]
@@ -250,7 +258,13 @@ impl FileSystemHookInstaller {
                 })?;
         let hooks_path =
             crate::repository::resolve_git_path(&repository_root, Self::HOOKS_GIT_PATH_KEY)?;
-        if !hooks_path.exists() || !hooks_path.is_dir() {
+        if !hooks_path.exists() {
+            fs::create_dir_all(&hooks_path).map_err(|source| Error::FailedToCreateHooksDir {
+                path: hooks_path.to_string_lossy().to_string(),
+                source,
+            })?;
+        }
+        if !hooks_path.is_dir() {
             return Err(Error::HooksDirNotFound(
                 hooks_path.to_string_lossy().to_string(),
             ));
@@ -275,7 +289,7 @@ impl FileSystemHookInstaller {
         }
 
         let path = config_file.to_string_lossy().to_string();
-        if Self::is_managed_file(config_file)? {
+        if is_managed_file(config_file)? {
             return Err(Error::RefusingToOverwriteManagedConfigFile { path });
         }
 
@@ -287,7 +301,7 @@ impl FileSystemHookInstaller {
             return Ok(());
         }
 
-        if Self::is_managed_file(hook_file)? {
+        if is_managed_file(hook_file)? {
             return Ok(());
         }
 
@@ -297,43 +311,7 @@ impl FileSystemHookInstaller {
     }
 
     fn ensure_can_write_config(&self, config_file: &Path) -> Result<(), Error> {
-        Self::ensure_can_write_managed_config(config_file, self.force_overwrite)
-    }
-
-    fn is_managed_file(path: &Path) -> Result<bool, Error> {
-        let mut file = fs::File::open(path).map_err(|source| Error::FailedToReadExistingFile {
-            path: path.to_string_lossy().to_string(),
-            source,
-        })?;
-        let mut header_buf = [0_u8; MANAGED_FILE_SCAN_BYTES];
-        let bytes_read =
-            file.read(&mut header_buf)
-                .map_err(|source| Error::FailedToReadExistingFile {
-                    path: path.to_string_lossy().to_string(),
-                    source,
-                })?;
-        let header = &header_buf[..bytes_read];
-        let marker_hash = format!("# {MANAGED_FILE_MARKER}");
-        let marker_rem = format!("REM {MANAGED_FILE_MARKER}");
-
-        for line in header
-            .split(|byte| *byte == b'\n')
-            .take(MANAGED_FILE_SCAN_LINES)
-        {
-            let normalized_line = line.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(line);
-            let normalized_line = normalized_line
-                .strip_suffix(b"\r")
-                .unwrap_or(normalized_line);
-            if normalized_line.is_empty() {
-                continue;
-            }
-            if normalized_line == marker_hash.as_bytes() || normalized_line == marker_rem.as_bytes()
-            {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+        ensure_can_write_config_file(config_file, self.force_overwrite)
     }
 }
 
@@ -359,6 +337,82 @@ impl HookInstaller for FileSystemHookInstaller {
         })?;
         Ok(config_path)
     }
+}
+
+/// Writes a git-smee config file at an arbitrary path using the same managed/unmanaged
+/// overwrite semantics as [`FileSystemHookInstaller::install_config_file`].
+pub fn write_config_file(
+    config_path: &Path,
+    config_content: &str,
+    force_overwrite: bool,
+) -> Result<(), Error> {
+    ensure_can_write_config_file(config_path, force_overwrite)?;
+    if let Some(parent) = config_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|source| Error::FailedToWriteConfigFile {
+            path: config_path.to_string_lossy().to_string(),
+            source,
+        })?;
+    }
+    fs::write(config_path, config_content).map_err(|source| Error::FailedToWriteConfigFile {
+        path: config_path.to_string_lossy().to_string(),
+        source,
+    })
+}
+
+fn ensure_can_write_config_file(config_file: &Path, force_overwrite: bool) -> Result<(), Error> {
+    if config_file.exists() && !config_file.is_file() {
+        return Err(Error::ConfigPathNotAFile {
+            path: config_file.to_string_lossy().to_string(),
+        });
+    }
+
+    if !config_file.exists() || force_overwrite {
+        return Ok(());
+    }
+
+    let path = config_file.to_string_lossy().to_string();
+    if is_managed_file(config_file)? {
+        return Err(Error::RefusingToOverwriteManagedConfigFile { path });
+    }
+
+    Err(Error::RefusingToOverwriteUnmanagedConfigFile { path })
+}
+
+fn is_managed_file(path: &Path) -> Result<bool, Error> {
+    let mut file = fs::File::open(path).map_err(|source| Error::FailedToReadExistingFile {
+        path: path.to_string_lossy().to_string(),
+        source,
+    })?;
+    let mut header_buf = [0_u8; MANAGED_FILE_SCAN_BYTES];
+    let bytes_read =
+        file.read(&mut header_buf)
+            .map_err(|source| Error::FailedToReadExistingFile {
+                path: path.to_string_lossy().to_string(),
+                source,
+            })?;
+    let header = &header_buf[..bytes_read];
+    let marker_hash = format!("# {MANAGED_FILE_MARKER}");
+    let marker_rem = format!("REM {MANAGED_FILE_MARKER}");
+
+    for line in header
+        .split(|byte| *byte == b'\n')
+        .take(MANAGED_FILE_SCAN_LINES)
+    {
+        let normalized_line = line.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(line);
+        let normalized_line = normalized_line
+            .strip_suffix(b"\r")
+            .unwrap_or(normalized_line);
+        if normalized_line.is_empty() {
+            continue;
+        }
+        if normalized_line == marker_hash.as_bytes() || normalized_line == marker_rem.as_bytes() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// Installs hook scripts for each configured lifecycle phase.
