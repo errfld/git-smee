@@ -54,6 +54,12 @@ pub enum Error {
     NotImplemented,
     #[error("Hooks directory not found: {0}")]
     HooksDirNotFound(String),
+    #[error("Failed to create hooks directory '{path}': {source}")]
+    FailedToCreateHooksDir {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("No hooks present in the configuration to install")]
     NoHooksPresent,
     #[error("Failed to write hook '{path}': {source}")]
@@ -252,7 +258,13 @@ impl FileSystemHookInstaller {
                 })?;
         let hooks_path =
             crate::repository::resolve_git_path(&repository_root, Self::HOOKS_GIT_PATH_KEY)?;
-        if !hooks_path.exists() || !hooks_path.is_dir() {
+        if !hooks_path.exists() {
+            fs::create_dir_all(&hooks_path).map_err(|source| Error::FailedToCreateHooksDir {
+                path: hooks_path.to_string_lossy().to_string(),
+                source,
+            })?;
+        }
+        if !hooks_path.is_dir() {
             return Err(Error::HooksDirNotFound(
                 hooks_path.to_string_lossy().to_string(),
             ));

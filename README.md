@@ -70,6 +70,8 @@ cargo install --path crates/git-smee-cli
 
    By default, `install` only overwrites hook files previously managed by git-smee.
    Existing unmanaged hook files are preserved unless you pass `--force`.
+   If the repository uses `core.hooksPath` and that directory does not exist yet,
+   `install` creates the effective hooks directory before writing managed wrappers.
 
 That's it! Your hooks are now active. When Git triggers a hook, the installed wrapper runs the `git-smee` executable directly and executes the configured commands in order.
 
