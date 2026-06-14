@@ -38,7 +38,7 @@ jobs:
         run: cargo build --workspace --all-targets --all-features --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
+        run: "cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::"
 
   macos-build-and-test:
     name: Build & test (macOS, stable)
@@ -59,7 +59,7 @@ jobs:
         run: cargo build --workspace --all-targets --all-features --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
+        run: "cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::"
 
   windows-build-and-test:
     name: Build & test (windows, stable)
@@ -80,7 +80,7 @@ jobs:
         run: cargo build --workspace --all-targets --all-features --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
+        run: "cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::"
 
   msrv-build-and-test:
     name: Build & test (MSRV 1.85.0)
@@ -101,7 +101,7 @@ jobs:
         run: cargo build --workspace --all-targets --all-features --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::
+        run: "cargo test --workspace --all-features --locked --verbose -- --skip repository::tests::"
 
   lint:
     name: Lint (fmt + clippy, stable)
@@ -192,7 +192,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Enforce coverage floor
-        run: cargo llvm-cov --workspace --all-features --locked --summary-only --fail-under-lines 70 -- --skip repository::tests::
+        run: "cargo llvm-cov --workspace --all-features --locked --summary-only --fail-under-lines 70 -- --skip repository::tests::"
 
       - name: Run coverage
         run: |
@@ -220,7 +220,7 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Run serialized repository tests
-        run: cargo test -p git-smee-core --lib --locked repository::tests:: -- --test-threads=1
+        run: "cargo test -p git-smee-core --lib --locked repository::tests:: -- --test-threads=1"
 
   repository-tests-flake-detection:
     name: Repository tests (flake detection)
