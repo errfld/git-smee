@@ -2,6 +2,7 @@ use std::{
     env,
     io::{self, ErrorKind, Write},
     process::Stdio,
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -482,20 +483,27 @@ fn run_hooks_with_runner_with_summary<R: CommandRunner>(
     }
 
     if !failed {
-        let mut parallel_runs: Vec<CommandRun> = parallel_hooks
+        let parallel_runs = Mutex::new(Vec::new());
+        let _ = parallel_hooks
             .par_iter()
             .enumerate()
-            .map(|(phase_index, (_, hook))| {
-                execute_command_record(
+            .try_for_each(|(phase_index, (_, hook))| {
+                let run = execute_command_record(
                     CommandPhase::Parallel,
                     phase_index,
                     &hook.command,
                     runner,
                     hook_args,
                     stdin_payload,
-                )
-            })
-            .collect();
+                );
+                let failed = run.outcome.is_failure();
+                lock_command_runs(&parallel_runs).push(run);
+                if failed { Err(()) } else { Ok(()) }
+            });
+        let mut parallel_runs = match parallel_runs.into_inner() {
+            Ok(runs) => runs,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         parallel_runs.sort_by_key(|run| run.index);
         command_runs.extend(parallel_runs);
     }
@@ -504,6 +512,15 @@ fn run_hooks_with_runner_with_summary<R: CommandRunner>(
         total_configured: hooks.len(),
         total_duration: started.elapsed(),
         command_runs,
+    }
+}
+
+fn lock_command_runs(
+    command_runs: &Mutex<Vec<CommandRun>>,
+) -> std::sync::MutexGuard<'_, Vec<CommandRun>> {
+    match command_runs.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 
