@@ -233,14 +233,11 @@ fn is_default_config_path(config_path: &Path, repository_root: &Path) -> bool {
     }
 
     let default_config_path = repository_root.join(DEFAULT_CONFIG_FILE_NAME);
-    match (
+    if let (Ok(config_path), Ok(default_config_path)) = (
         config_path.canonicalize(),
         default_config_path.canonicalize(),
     ) {
-        (Ok(config_path), Ok(default_config_path)) => {
-            return config_path == default_config_path;
-        }
-        _ => {}
+        return config_path == default_config_path;
     }
 
     normalize_path_lexically(config_path) == normalize_path_lexically(&default_config_path)
