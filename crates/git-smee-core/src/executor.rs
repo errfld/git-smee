@@ -158,6 +158,8 @@ impl CommandPhase {
 pub struct HookRunSummary {
     total_configured: usize,
     total_duration: Duration,
+    sequential_duration: Duration,
+    parallel_duration: Duration,
     command_runs: Vec<CommandRun>,
 }
 
@@ -217,14 +219,16 @@ impl HookRunSummary {
                 format_duration(self.total_duration),
             ),
             format!(
-                "  sequential: {} attempted, {} failed",
+                "  sequential: {} attempted, {} failed in {}",
                 self.phase_attempted_count(CommandPhase::Sequential),
                 self.phase_failed_count(CommandPhase::Sequential),
+                format_duration(self.sequential_duration),
             ),
             format!(
-                "  parallel: {} attempted, {} failed",
+                "  parallel: {} attempted, {} failed in {}",
                 self.phase_attempted_count(CommandPhase::Parallel),
                 self.phase_failed_count(CommandPhase::Parallel),
+                format_duration(self.parallel_duration),
             ),
         ];
         for run in &self.command_runs {
@@ -466,6 +470,7 @@ fn run_hooks_with_runner_with_summary<R: CommandRunner>(
 
     let mut command_runs = Vec::new();
     let mut failed = false;
+    let sequential_started = Instant::now();
     for (phase_index, (_, hook)) in sequential_hooks.into_iter().enumerate() {
         if failed {
             break;
@@ -481,8 +486,11 @@ fn run_hooks_with_runner_with_summary<R: CommandRunner>(
         failed = run.outcome.is_failure();
         command_runs.push(run);
     }
+    let sequential_duration = sequential_started.elapsed();
 
+    let mut parallel_duration = Duration::ZERO;
     if !failed {
+        let parallel_started = Instant::now();
         let parallel_runs = Mutex::new(Vec::new());
         let _ = parallel_hooks
             .par_iter()
@@ -504,6 +512,7 @@ fn run_hooks_with_runner_with_summary<R: CommandRunner>(
             Ok(runs) => runs,
             Err(poisoned) => poisoned.into_inner(),
         };
+        parallel_duration = parallel_started.elapsed();
         parallel_runs.sort_by_key(|run| run.index);
         command_runs.extend(parallel_runs);
     }
@@ -511,6 +520,8 @@ fn run_hooks_with_runner_with_summary<R: CommandRunner>(
     HookRunSummary {
         total_configured: hooks.len(),
         total_duration: started.elapsed(),
+        sequential_duration,
+        parallel_duration,
         command_runs,
     }
 }
@@ -830,6 +841,149 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(runner.calls(), vec!["check-commit-message"]);
         assert_eq!(runner.hook_args_calls(), vec![hook_args]);
+    }
+
+    #[test]
+    fn given_summary_success_when_rendering_then_counts_phases_and_durations() {
+        let hooks = vec![
+            HookDefinition {
+                command: "seq-ok".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "parallel-ok".to_string(),
+                parallel_execution_allowed: true,
+            },
+        ];
+        let runner = FakeRunner::with_command_outcomes(vec![
+            ("seq-ok", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-ok", vec![PlannedResult::Exit(Some(0))]),
+        ]);
+
+        let summary = run_hooks_with_runner_with_summary(&hooks, &runner, &[], None);
+
+        assert_eq!(summary.total_configured(), 2);
+        assert_eq!(summary.attempted_count(), 2);
+        assert_eq!(summary.skipped_count(), 0);
+        assert_eq!(summary.failed_count(), 0);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Sequential), 1);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Sequential), 0);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Parallel), 1);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Parallel), 0);
+        assert!(summary.first_failure().is_none());
+        assert!(summary.error().is_none());
+
+        let lines = summary.text_lines(LifeCyclePhase::PreCommit).join("\n");
+        assert!(lines.contains("Hook summary: pre-commit"));
+        assert!(lines.contains("total: 2 attempted, 0 skipped, 0 failed in"));
+        assert!(lines.contains("sequential: 1 attempted, 0 failed in"));
+        assert!(lines.contains("parallel: 1 attempted, 0 failed in"));
+        assert!(lines.contains("sequential command #1: ok in"));
+        assert!(lines.contains("parallel command #1: ok in"));
+    }
+
+    #[test]
+    fn given_summary_sequential_failure_when_rendering_then_reports_skipped_and_first_failure() {
+        let hooks = vec![
+            HookDefinition {
+                command: "seq-fail".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "seq-skipped".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "parallel-skipped".to_string(),
+                parallel_execution_allowed: true,
+            },
+        ];
+        let runner = FakeRunner::with_command_outcomes(vec![(
+            "seq-fail",
+            vec![PlannedResult::Exit(Some(9))],
+        )]);
+
+        let summary = run_hooks_with_runner_with_summary(&hooks, &runner, &[], None);
+
+        assert_eq!(summary.total_configured(), 3);
+        assert_eq!(summary.attempted_count(), 1);
+        assert_eq!(summary.skipped_count(), 2);
+        assert_eq!(summary.failed_count(), 1);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Sequential), 1);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Sequential), 1);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Parallel), 0);
+        assert!(matches!(summary.error(), Some(Error::ExecutionFailed(9))));
+
+        let first_failure = summary.first_failure().expect("missing first failure");
+        assert_eq!(first_failure.status_display(), "failed with code 9");
+        assert_eq!(
+            first_failure.failure_display(),
+            "sequential command #1 exited with code 9"
+        );
+    }
+
+    #[test]
+    fn given_summary_parallel_failures_when_rendering_then_first_failure_is_phase_ordered() {
+        let summary = HookRunSummary {
+            total_configured: 2,
+            total_duration: Duration::ZERO,
+            sequential_duration: Duration::ZERO,
+            parallel_duration: Duration::ZERO,
+            command_runs: vec![
+                CommandRun {
+                    phase: CommandPhase::Parallel,
+                    index: 1,
+                    duration: Duration::ZERO,
+                    outcome: CommandOutcome::Exit(7),
+                },
+                CommandRun {
+                    phase: CommandPhase::Parallel,
+                    index: 0,
+                    duration: Duration::ZERO,
+                    outcome: CommandOutcome::Exit(5),
+                },
+            ],
+        };
+
+        assert_eq!(summary.failed_count(), 2);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Parallel), 2);
+        let first_failure = summary.first_failure().expect("missing first failure");
+        assert_eq!(
+            first_failure.failure_display(),
+            "parallel command #1 exited with code 5"
+        );
+        let lines = summary.text_lines(LifeCyclePhase::PreCommit).join("\n");
+        assert!(lines.contains("first failure: parallel command #1 exited with code 5"));
+    }
+
+    #[test]
+    fn given_spawn_failure_when_rendering_summary_then_status_and_error_are_redacted() {
+        let hooks = vec![HookDefinition {
+            command: "SECRET=value deploy --token super-secret-value".to_string(),
+            parallel_execution_allowed: false,
+        }];
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
+            io::ErrorKind::NotFound,
+        )]);
+
+        let summary = run_hooks_with_runner_with_summary(&hooks, &runner, &[], None);
+
+        let first_failure = summary.first_failure().expect("missing first failure");
+        assert_eq!(first_failure.status_display(), "spawn failed");
+        assert!(
+            first_failure
+                .failure_display()
+                .contains("deploy <args redacted>")
+        );
+        assert!(
+            !first_failure
+                .failure_display()
+                .contains("super-secret-value")
+        );
+        assert!(matches!(
+            summary.error(),
+            Some(Error::CommandSpawnFailed { .. })
+        ));
     }
 
     #[test]

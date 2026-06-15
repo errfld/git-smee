@@ -127,8 +127,8 @@ After each `git smee run <hook>`, git-smee prints a compact summary after the ho
 ```text
 Hook summary: pre-commit
   total: 2 attempted, 0 skipped, 0 failed in 128ms
-  sequential: 1 attempted, 0 failed
-  parallel: 1 attempted, 0 failed
+  sequential: 1 attempted, 0 failed in 48ms
+  parallel: 1 attempted, 0 failed in 80ms
   - sequential command #1: ok in 48ms
   - parallel command #1: ok in 80ms
 ```
@@ -137,9 +137,9 @@ Failed runs include the first failing command and exit code while preserving the
 
 ```text
 Hook summary: pre-commit
-  total: 2 attempted, 1 skipped, 1 failed in 12ms
-  sequential: 1 attempted, 1 failed
-  parallel: 0 attempted, 0 failed
+  total: 1 attempted, 1 skipped, 1 failed in 12ms
+  sequential: 1 attempted, 1 failed in 12ms
+  parallel: 0 attempted, 0 failed in 0ms
   - sequential command #1: failed with code 1 in 12ms
   first failure: sequential command #1 exited with code 1
 ```
