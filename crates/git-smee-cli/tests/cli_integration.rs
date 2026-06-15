@@ -1,5 +1,8 @@
 use std::{fs, path::Path};
 
+#[cfg(unix)]
+use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
 use assert_cmd::Command;
 use assert_cmd::cargo;
 use assert_fs::TempDir;
@@ -400,6 +403,36 @@ command = "echo env"
     cmd.current_dir(&test_repo.path)
         .arg("install")
         .env("GIT_SMEE_CONFIG", &env_config)
+        .assert()
+        .success();
+
+    assert!(test_repo.path.join(".git/hooks/pre-push").exists());
+    assert!(!test_repo.path.join(".git/hooks/pre-commit").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn given_non_utf8_git_smee_config_env_when_installing_then_cli_uses_env_config() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+    let config_path = test_repo
+        .path
+        .join(OsString::from_vec(b"configs/env-\xFF.toml".to_vec()));
+    fs::create_dir_all(config_path.parent().expect("missing parent"))
+        .expect("failed to create config dir");
+    fs::write(
+        &config_path,
+        r#"
+[[pre-push]]
+command = "echo non-utf8-env"
+"#,
+    )
+    .expect("failed to write non-UTF-8 config path");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .arg("install")
+        .env("GIT_SMEE_CONFIG", &config_path)
         .assert()
         .success();
 
@@ -1005,6 +1038,38 @@ fn given_default_config_alias_when_installing_then_hook_script_keeps_portable_re
     cmd.current_dir(&test_repo.path)
         .arg("--config")
         .arg("./.git-smee.toml")
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook_content =
+        fs::read_to_string(test_repo.path.join(".git/hooks/pre-commit")).expect("missing hook");
+
+    #[cfg(unix)]
+    assert!(hook_content.contains("GIT_SMEE_CONFIG='.git-smee.toml'"));
+
+    #[cfg(windows)]
+    {
+        let normalized_hook_content = hook_content.replace('\\', "/");
+        assert!(normalized_hook_content.contains(".git-smee.toml"));
+        assert!(
+            !normalized_hook_content
+                .contains(&test_repo.config_path().to_string_lossy().replace('\\', "/"),)
+        );
+    }
+}
+
+#[test]
+fn given_equivalent_default_config_from_subdir_when_installing_then_hook_script_keeps_portable_relative_path()
+ {
+    let test_repo = common::TestRepo::default();
+    let nested_dir = test_repo.path.join("a/b");
+    fs::create_dir_all(&nested_dir).expect("failed to create nested invocation dir");
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&nested_dir)
+        .arg("--config")
+        .arg("../../.git-smee.toml")
         .arg("install")
         .assert()
         .success();

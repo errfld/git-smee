@@ -1,7 +1,8 @@
 use std::{
     env,
+    ffi::OsStr,
     io::{self, IsTerminal, Read},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -118,12 +119,17 @@ fn resolve_config_path(cli_config: Option<PathBuf>, invocation_dir: &Path) -> Pa
     if let Some(path) = cli_config {
         return normalize_user_config_path(path, invocation_dir);
     }
-    if let Ok(path_from_env) = env::var("GIT_SMEE_CONFIG")
-        && !path_from_env.trim().is_empty()
-    {
-        return normalize_user_config_path(PathBuf::from(path_from_env), invocation_dir);
+    match env::var_os("GIT_SMEE_CONFIG") {
+        Some(path_from_env) if !is_blank_env_config(&path_from_env) => {
+            return normalize_user_config_path(PathBuf::from(path_from_env), invocation_dir);
+        }
+        _ => {}
     }
     PathBuf::from_str(DEFAULT_CONFIG_FILE_NAME).expect("default config path should be valid")
+}
+
+fn is_blank_env_config(value: &OsStr) -> bool {
+    value.to_str().is_some_and(|value| value.trim().is_empty())
 }
 
 fn normalize_user_config_path(path: PathBuf, invocation_dir: &Path) -> PathBuf {
@@ -220,8 +226,39 @@ fn read_config_file(config_path: &Path) -> Result<SmeeConfig, config::Error> {
 }
 
 fn is_default_config_path(config_path: &Path, repository_root: &Path) -> bool {
-    config_path == Path::new(DEFAULT_CONFIG_FILE_NAME)
+    if config_path == Path::new(DEFAULT_CONFIG_FILE_NAME)
         || config_path == repository_root.join(DEFAULT_CONFIG_FILE_NAME)
+    {
+        return true;
+    }
+
+    let default_config_path = repository_root.join(DEFAULT_CONFIG_FILE_NAME);
+    match (
+        config_path.canonicalize(),
+        default_config_path.canonicalize(),
+    ) {
+        (Ok(config_path), Ok(default_config_path)) if config_path == default_config_path => {
+            return true;
+        }
+        _ => {}
+    }
+
+    normalize_path_lexically(config_path) == normalize_path_lexically(&default_config_path)
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            Component::RootDir | Component::Prefix(_) => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn normalize_config_path_for_hook_script(config_path: &Path, repository_root: &Path) -> PathBuf {
