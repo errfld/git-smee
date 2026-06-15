@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
 use assert_cmd::Command;
@@ -410,7 +410,7 @@ command = "echo env"
     assert!(!test_repo.path.join(".git/hooks/pre-commit").exists());
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn given_non_utf8_git_smee_config_env_when_installing_then_cli_uses_env_config() {
     let test_repo = common::TestRepo::default();
