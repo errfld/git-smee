@@ -87,12 +87,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let phase = LifeCyclePhase::from_str(&hook)?;
             let stdin_payload = read_hook_stdin_for_phase(phase)?;
             let config = read_config_file(&config_path)?;
-            executor::execute_hook_with_args_and_stdin(
+            let summary = executor::execute_hook_with_summary(
                 &config,
                 phase,
                 &hook_args,
                 stdin_payload.as_deref(),
             )?;
+            for line in summary.text_lines(phase) {
+                println!("{line}");
+            }
+            if let Some(error) = summary.error() {
+                return Err(Box::new(error));
+            }
             Ok(())
         }
         Command::Initialize { force } => {
