@@ -412,7 +412,7 @@ command = "echo env"
 
 #[cfg(target_os = "linux")]
 #[test]
-fn given_non_utf8_git_smee_config_env_when_installing_then_cli_uses_env_config() {
+fn given_non_utf8_git_smee_config_env_when_installing_then_cli_rejects_hook_generation() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
     let config_path = test_repo
@@ -434,9 +434,12 @@ command = "echo non-utf8-env"
         .arg("install")
         .env("GIT_SMEE_CONFIG", &config_path)
         .assert()
-        .success();
+        .failure()
+        .stderr(predicate::str::contains(
+            "install cannot generate hook scripts for non-UTF-8 config paths",
+        ));
 
-    assert!(test_repo.path.join(".git/hooks/pre-push").exists());
+    assert!(!test_repo.path.join(".git/hooks/pre-push").exists());
     assert!(!test_repo.path.join(".git/hooks/pre-commit").exists());
 }
 

@@ -73,7 +73,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             repository::ensure_in_repo_root()?;
             let installer = installer::FileSystemHookInstaller::from_default_with_force(force)?;
             let config_path_for_hooks =
-                normalize_config_path_for_hook_script(&config_path, &env::current_dir()?);
+                normalize_config_path_for_hook_script(&config_path, &env::current_dir()?)?;
             let hook_script_options =
                 HookScriptOptions::new(env::current_exe()?, config_path_for_hooks);
             println!("Installing hooks...");
@@ -237,8 +237,8 @@ fn is_default_config_path(config_path: &Path, repository_root: &Path) -> bool {
         config_path.canonicalize(),
         default_config_path.canonicalize(),
     ) {
-        (Ok(config_path), Ok(default_config_path)) if config_path == default_config_path => {
-            return true;
+        (Ok(config_path), Ok(default_config_path)) => {
+            return config_path == default_config_path;
         }
         _ => {}
     }
@@ -261,9 +261,47 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
     normalized
 }
 
-fn normalize_config_path_for_hook_script(config_path: &Path, repository_root: &Path) -> PathBuf {
+fn normalize_config_path_for_hook_script(
+    config_path: &Path,
+    repository_root: &Path,
+) -> io::Result<PathBuf> {
     if is_default_config_path(config_path, repository_root) {
-        return PathBuf::from(DEFAULT_CONFIG_FILE_NAME);
+        return Ok(PathBuf::from(DEFAULT_CONFIG_FILE_NAME));
     }
-    config_path.to_path_buf()
+    if config_path.to_str().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "install cannot generate hook scripts for non-UTF-8 config paths; use a UTF-8 path for --config or GIT_SMEE_CONFIG",
+        ));
+    }
+    Ok(config_path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_inequality_does_not_fall_back_to_lexical_default_match() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::tempdir().expect("failed to create tempdir");
+        let repository_root = temp_dir.path().join("repo");
+        let outside_dir = temp_dir.path().join("outside");
+        fs::create_dir_all(&repository_root).expect("failed to create repo");
+        fs::create_dir_all(&outside_dir).expect("failed to create outside dir");
+
+        let default_config_path = repository_root.join(DEFAULT_CONFIG_FILE_NAME);
+        let outside_config_path = temp_dir.path().join(DEFAULT_CONFIG_FILE_NAME);
+        fs::write(&default_config_path, "").expect("failed to write default config");
+        fs::write(&outside_config_path, "").expect("failed to write outside config");
+        symlink(&outside_dir, repository_root.join("link")).expect("failed to create symlink");
+
+        let config_path = repository_root.join("link/../.git-smee.toml");
+
+        assert!(!is_default_config_path(&config_path, &repository_root));
+    }
 }
