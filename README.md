@@ -120,7 +120,29 @@ When running hooks, git-smee executes commands in two phases:
 1. **Sequential phase**: All commands with `parallel_execution_allowed = false` (or omitted) run one at a time, in the order they appear in the config.
 2. **Parallel phase**: All commands with `parallel_execution_allowed = true` run concurrently using a thread pool.
 
-Sequential commands always complete before parallel commands begin. If any sequential command fails, execution stops immediately. For parallel commands, the first failing command causes the overall run to fail, but commands that are already in flight may still finish.
+Sequential commands always complete before parallel commands begin. If any sequential command fails, execution stops immediately. For parallel commands, the first failing command causes the overall run to fail, but commands that are already in flight may still finish; git-smee reports failures deterministically by configured parallel command order for the commands that were attempted.
+
+After each `git smee run <hook>`, git-smee prints a compact summary after the hook command output:
+
+```text
+Hook summary: pre-commit
+  total: 2 attempted, 0 skipped, 0 failed in 128ms
+  sequential: 1 attempted, 0 failed in 48ms
+  parallel: 1 attempted, 0 failed in 80ms
+  - sequential command #1: ok in 48ms
+  - parallel command #1: ok in 80ms
+```
+
+Failed runs include the first failing command and exit code while preserving the command's own output:
+
+```text
+Hook summary: pre-commit
+  total: 1 attempted, 1 skipped, 1 failed in 12ms
+  sequential: 1 attempted, 1 failed in 12ms
+  parallel: 0 attempted, 0 failed in 0ms
+  - sequential command #1: failed with code 1 in 12ms
+  first failure: sequential command #1 exited with code 1
+```
 
 **Example:**
 

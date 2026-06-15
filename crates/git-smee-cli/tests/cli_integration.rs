@@ -721,7 +721,7 @@ command = "echo from-invocation-config"
 }
 
 #[test]
-fn given_successful_hook_when_running_then_cli_stdout_contains_only_hook_output() {
+fn given_successful_hook_when_running_then_cli_stdout_contains_hook_output_and_summary() {
     let test_repo = common::TestRepo::default();
     let command = if cfg!(windows) {
         "echo hook-output"
@@ -737,7 +737,83 @@ fn given_successful_hook_when_running_then_cli_stdout_contains_only_hook_output(
         .success()
         .stdout(
             predicate::str::contains("hook-output")
+                .and(predicate::str::contains("Hook summary: pre-commit"))
+                .and(predicate::str::contains(
+                    "sequential: 1 attempted, 0 failed",
+                ))
+                .and(predicate::str::contains("total: 1 attempted, 0 skipped"))
                 .and(predicate::str::contains("Running hook:").not()),
+        );
+}
+
+#[test]
+fn given_sequential_hook_failure_when_running_then_summary_identifies_failing_command() {
+    let test_repo = common::TestRepo::default();
+    let fail_command = if cfg!(windows) { "exit /b 7" } else { "exit 7" };
+    test_repo.write_config(&format!(
+        "[[pre-commit]]\ncommand = \"echo before\"\n\n[[pre-commit]]\ncommand = {fail_command:?}\n\n[[pre-commit]]\ncommand = \"echo skipped\"\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-commit"])
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("Hook summary: pre-commit")
+                .and(predicate::str::contains(
+                    "sequential: 2 attempted, 1 failed",
+                ))
+                .and(predicate::str::contains("total: 2 attempted, 1 skipped"))
+                .and(predicate::str::contains(
+                    "first failure: sequential command #2 exited with code 7",
+                )),
+        );
+}
+
+#[test]
+fn given_parallel_hooks_when_running_then_summary_reports_parallel_phase() {
+    let test_repo = common::TestRepo::default();
+    let ok_command = if cfg!(windows) {
+        "echo parallel-ok"
+    } else {
+        "printf 'parallel-ok\\n'"
+    };
+    test_repo.write_config(&format!(
+        "[[pre-commit]]\ncommand = {ok_command:?}\nparallel_execution_allowed = true\n\n[[pre-commit]]\ncommand = {ok_command:?}\nparallel_execution_allowed = true\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-commit"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Hook summary: pre-commit")
+                .and(predicate::str::contains("parallel: 2 attempted, 0 failed"))
+                .and(predicate::str::contains("total: 2 attempted, 0 skipped")),
+        );
+}
+
+#[test]
+fn given_parallel_hook_failure_when_running_then_summary_is_deterministic() {
+    let test_repo = common::TestRepo::default();
+    let fail_command = if cfg!(windows) { "exit /b 4" } else { "exit 4" };
+    test_repo.write_config(&format!(
+        "[[pre-commit]]\ncommand = \"echo sequential-ok\"\n\n[[pre-commit]]\ncommand = {fail_command:?}\nparallel_execution_allowed = true\n\n[[pre-commit]]\ncommand = \"echo maybe-in-flight\"\nparallel_execution_allowed = true\n"
+    ));
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "pre-commit"])
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("Hook summary: pre-commit")
+                .and(predicate::str::contains("parallel:"))
+                .and(predicate::str::contains(
+                    "first failure: parallel command #1 exited with code 4",
+                )),
         );
 }
 

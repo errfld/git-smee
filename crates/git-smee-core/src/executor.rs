@@ -2,7 +2,9 @@ use std::{
     env,
     io::{self, ErrorKind, Write},
     process::Stdio,
+    sync::Mutex,
     thread,
+    time::{Duration, Instant},
 };
 
 #[cfg(windows)]
@@ -63,6 +65,19 @@ pub fn execute_hook_with_args_and_stdin(
     )
 }
 
+pub fn execute_hook_with_summary(
+    smee_config: &SmeeConfig,
+    phase: LifeCyclePhase,
+    hook_args: &[String],
+    stdin_payload: Option<&[u8]>,
+) -> Result<HookRunSummary, Error> {
+    let platform = Platform::current();
+    let runner = PlatformCommandRunner {
+        platform: &platform,
+    };
+    execute_hook_with_runner_and_summary(smee_config, phase, &runner, hook_args, stdin_payload)
+}
+
 pub fn execute_hook_with_platform(
     smee_config: &SmeeConfig,
     phase: LifeCyclePhase,
@@ -103,6 +118,216 @@ fn execute_hook_with_runner<R: CommandRunner>(
     match smee_config.hooks.get(&phase) {
         None => Err(Error::NoHooksConfigured(phase)),
         Some(hooks) => run_hooks_with_runner(hooks, runner, hook_args, stdin_payload),
+    }
+}
+
+fn execute_hook_with_runner_and_summary<R: CommandRunner>(
+    smee_config: &SmeeConfig,
+    phase: LifeCyclePhase,
+    runner: &R,
+    hook_args: &[String],
+    stdin_payload: Option<&[u8]>,
+) -> Result<HookRunSummary, Error> {
+    match smee_config.hooks.get(&phase) {
+        None => Err(Error::NoHooksConfigured(phase)),
+        Some(hooks) => Ok(run_hooks_with_runner_with_summary(
+            hooks,
+            runner,
+            hook_args,
+            stdin_payload,
+        )),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPhase {
+    Sequential,
+    Parallel,
+}
+
+impl CommandPhase {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sequential => "sequential",
+            Self::Parallel => "parallel",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HookRunSummary {
+    total_configured: usize,
+    total_duration: Duration,
+    sequential_duration: Duration,
+    parallel_duration: Duration,
+    command_runs: Vec<CommandRun>,
+}
+
+impl HookRunSummary {
+    pub fn total_configured(&self) -> usize {
+        self.total_configured
+    }
+
+    pub fn attempted_count(&self) -> usize {
+        self.command_runs.len()
+    }
+
+    pub fn skipped_count(&self) -> usize {
+        self.total_configured.saturating_sub(self.attempted_count())
+    }
+
+    pub fn failed_count(&self) -> usize {
+        self.command_runs
+            .iter()
+            .filter(|run| run.outcome.is_failure())
+            .count()
+    }
+
+    pub fn phase_attempted_count(&self, phase: CommandPhase) -> usize {
+        self.command_runs
+            .iter()
+            .filter(|run| run.phase == phase)
+            .count()
+    }
+
+    pub fn phase_failed_count(&self, phase: CommandPhase) -> usize {
+        self.command_runs
+            .iter()
+            .filter(|run| run.phase == phase && run.outcome.is_failure())
+            .count()
+    }
+
+    pub fn first_failure(&self) -> Option<&CommandRun> {
+        self.command_runs
+            .iter()
+            .filter(|run| run.outcome.is_failure())
+            .min_by_key(|run| (run.phase_sort_key(), run.index))
+    }
+
+    pub fn error(&self) -> Option<Error> {
+        self.first_failure().and_then(CommandRun::to_error)
+    }
+
+    pub fn text_lines(&self, phase: LifeCyclePhase) -> Vec<String> {
+        let mut lines = vec![
+            format!("Hook summary: {phase}"),
+            format!(
+                "  total: {} attempted, {} skipped, {} failed in {}",
+                self.attempted_count(),
+                self.skipped_count(),
+                self.failed_count(),
+                format_duration(self.total_duration),
+            ),
+            format!(
+                "  sequential: {} attempted, {} failed in {}",
+                self.phase_attempted_count(CommandPhase::Sequential),
+                self.phase_failed_count(CommandPhase::Sequential),
+                format_duration(self.sequential_duration),
+            ),
+            format!(
+                "  parallel: {} attempted, {} failed in {}",
+                self.phase_attempted_count(CommandPhase::Parallel),
+                self.phase_failed_count(CommandPhase::Parallel),
+                format_duration(self.parallel_duration),
+            ),
+        ];
+        for run in &self.command_runs {
+            lines.push(format!(
+                "  - {} command #{}: {} in {}",
+                run.phase.as_str(),
+                run.index + 1,
+                run.status_display(),
+                format_duration(run.duration),
+            ));
+        }
+        if let Some(first_failure) = self.first_failure() {
+            lines.push(format!(
+                "  first failure: {}",
+                first_failure.failure_display()
+            ));
+        }
+        lines
+    }
+}
+
+#[derive(Debug)]
+pub struct CommandRun {
+    phase: CommandPhase,
+    index: usize,
+    duration: Duration,
+    outcome: CommandOutcome,
+}
+
+impl CommandRun {
+    const fn phase_sort_key(&self) -> usize {
+        match self.phase {
+            CommandPhase::Sequential => 0,
+            CommandPhase::Parallel => 1,
+        }
+    }
+
+    fn status_display(&self) -> String {
+        match &self.outcome {
+            CommandOutcome::Success => "ok".to_string(),
+            CommandOutcome::Exit(code) => format!("failed with code {code}"),
+            CommandOutcome::Signal => "terminated by signal".to_string(),
+            CommandOutcome::SpawnFailed { .. } => "spawn failed".to_string(),
+            CommandOutcome::NoCommandDefined => "no command defined".to_string(),
+        }
+    }
+
+    fn failure_display(&self) -> String {
+        let prefix = format!("{} command #{}", self.phase.as_str(), self.index + 1);
+        match &self.outcome {
+            CommandOutcome::Success => format!("{prefix} succeeded"),
+            CommandOutcome::Exit(code) => format!("{prefix} exited with code {code}"),
+            CommandOutcome::Signal => format!("{prefix} was terminated by a signal"),
+            CommandOutcome::SpawnFailed {
+                command,
+                shell,
+                source,
+            } => {
+                format!("{prefix} failed to spawn '{command}' via '{shell}': {source}")
+            }
+            CommandOutcome::NoCommandDefined => format!("{prefix} had no command defined"),
+        }
+    }
+
+    fn to_error(&self) -> Option<Error> {
+        match &self.outcome {
+            CommandOutcome::Success => None,
+            CommandOutcome::Exit(code) => Some(Error::ExecutionFailed(*code)),
+            CommandOutcome::Signal => Some(Error::ExecutionTerminatedBySignal),
+            CommandOutcome::SpawnFailed {
+                command,
+                shell,
+                source,
+            } => Some(Error::CommandSpawnFailed {
+                command: command.clone(),
+                shell: shell.clone(),
+                source: io::Error::new(source.kind(), source.to_string()),
+            }),
+            CommandOutcome::NoCommandDefined => Some(Error::NoCommandDefined),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum CommandOutcome {
+    Success,
+    Exit(i32),
+    Signal,
+    SpawnFailed {
+        command: String,
+        shell: String,
+        source: io::Error,
+    },
+    NoCommandDefined,
+}
+
+impl CommandOutcome {
+    const fn is_failure(&self) -> bool {
+        !matches!(self, Self::Success)
     }
 }
 
@@ -216,32 +441,140 @@ fn is_hook_arg_env_key(key: &str) -> bool {
     !suffix.is_empty() && !suffix.starts_with('0') && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
+type IndexedHook<'a> = (usize, &'a HookDefinition);
+
 fn run_hooks_with_runner<R: CommandRunner>(
     hooks: &[HookDefinition],
     runner: &R,
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    let (parallel_hooks, sequential_hooks): (Vec<&HookDefinition>, Vec<&HookDefinition>) = (
-        hooks
-            .iter()
-            .filter(|hook| hook.parallel_execution_allowed)
-            .collect(),
-        hooks
-            .iter()
-            .filter(|hook| !hook.parallel_execution_allowed)
-            .collect(),
-    );
-
-    sequential_hooks
-        .iter()
-        .try_for_each(|&hook| execute_command(&hook.command, runner, hook_args, stdin_payload))?;
-    parallel_hooks
-        .par_iter()
-        .try_for_each(|&hook| execute_command(&hook.command, runner, hook_args, stdin_payload))?;
-    Ok(())
+    let summary = run_hooks_with_runner_with_summary(hooks, runner, hook_args, stdin_payload);
+    match summary.error() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
+fn run_hooks_with_runner_with_summary<R: CommandRunner>(
+    hooks: &[HookDefinition],
+    runner: &R,
+    hook_args: &[String],
+    stdin_payload: Option<&[u8]>,
+) -> HookRunSummary {
+    let started = Instant::now();
+    let (parallel_hooks, sequential_hooks): (Vec<IndexedHook<'_>>, Vec<IndexedHook<'_>>) = hooks
+        .iter()
+        .enumerate()
+        .partition(|(_, hook)| hook.parallel_execution_allowed);
+
+    let mut command_runs = Vec::new();
+    let mut failed = false;
+    let sequential_started = Instant::now();
+    for (phase_index, (_, hook)) in sequential_hooks.into_iter().enumerate() {
+        if failed {
+            break;
+        }
+        let run = execute_command_record(
+            CommandPhase::Sequential,
+            phase_index,
+            &hook.command,
+            runner,
+            hook_args,
+            stdin_payload,
+        );
+        failed = run.outcome.is_failure();
+        command_runs.push(run);
+    }
+    let sequential_duration = sequential_started.elapsed();
+
+    let mut parallel_duration = Duration::ZERO;
+    if !failed {
+        let parallel_started = Instant::now();
+        let parallel_runs = Mutex::new(Vec::new());
+        let _ = parallel_hooks
+            .par_iter()
+            .enumerate()
+            .try_for_each(|(phase_index, (_, hook))| {
+                let run = execute_command_record(
+                    CommandPhase::Parallel,
+                    phase_index,
+                    &hook.command,
+                    runner,
+                    hook_args,
+                    stdin_payload,
+                );
+                let failed = run.outcome.is_failure();
+                lock_command_runs(&parallel_runs).push(run);
+                if failed { Err(()) } else { Ok(()) }
+            });
+        let mut parallel_runs = match parallel_runs.into_inner() {
+            Ok(runs) => runs,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        parallel_duration = parallel_started.elapsed();
+        parallel_runs.sort_by_key(|run| run.index);
+        command_runs.extend(parallel_runs);
+    }
+
+    HookRunSummary {
+        total_configured: hooks.len(),
+        total_duration: started.elapsed(),
+        sequential_duration,
+        parallel_duration,
+        command_runs,
+    }
+}
+
+fn lock_command_runs(
+    command_runs: &Mutex<Vec<CommandRun>>,
+) -> std::sync::MutexGuard<'_, Vec<CommandRun>> {
+    match command_runs.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn execute_command_record(
+    phase: CommandPhase,
+    index: usize,
+    command: &str,
+    runner: &impl CommandRunner,
+    hook_args: &[String],
+    stdin_payload: Option<&[u8]>,
+) -> CommandRun {
+    let started = Instant::now();
+    let outcome = if command.trim().is_empty() {
+        CommandOutcome::NoCommandDefined
+    } else {
+        match runner.run(command, hook_args, stdin_payload) {
+            Ok(Some(0)) => CommandOutcome::Success,
+            Ok(Some(exit_status_code)) => CommandOutcome::Exit(exit_status_code),
+            Ok(None) => CommandOutcome::Signal,
+            Err(source) => CommandOutcome::SpawnFailed {
+                command: redact_command(command),
+                shell: runner.shell_display().to_string(),
+                source,
+            },
+        }
+    };
+    CommandRun {
+        phase,
+        index,
+        duration: started.elapsed(),
+        outcome,
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{:.2}s", duration.as_secs_f64())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
+}
+
+#[cfg(test)]
 fn execute_command(
     command: &str,
     runner: &impl CommandRunner,
@@ -508,6 +841,149 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(runner.calls(), vec!["check-commit-message"]);
         assert_eq!(runner.hook_args_calls(), vec![hook_args]);
+    }
+
+    #[test]
+    fn given_summary_success_when_rendering_then_counts_phases_and_durations() {
+        let hooks = vec![
+            HookDefinition {
+                command: "seq-ok".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "parallel-ok".to_string(),
+                parallel_execution_allowed: true,
+            },
+        ];
+        let runner = FakeRunner::with_command_outcomes(vec![
+            ("seq-ok", vec![PlannedResult::Exit(Some(0))]),
+            ("parallel-ok", vec![PlannedResult::Exit(Some(0))]),
+        ]);
+
+        let summary = run_hooks_with_runner_with_summary(&hooks, &runner, &[], None);
+
+        assert_eq!(summary.total_configured(), 2);
+        assert_eq!(summary.attempted_count(), 2);
+        assert_eq!(summary.skipped_count(), 0);
+        assert_eq!(summary.failed_count(), 0);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Sequential), 1);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Sequential), 0);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Parallel), 1);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Parallel), 0);
+        assert!(summary.first_failure().is_none());
+        assert!(summary.error().is_none());
+
+        let lines = summary.text_lines(LifeCyclePhase::PreCommit).join("\n");
+        assert!(lines.contains("Hook summary: pre-commit"));
+        assert!(lines.contains("total: 2 attempted, 0 skipped, 0 failed in"));
+        assert!(lines.contains("sequential: 1 attempted, 0 failed in"));
+        assert!(lines.contains("parallel: 1 attempted, 0 failed in"));
+        assert!(lines.contains("sequential command #1: ok in"));
+        assert!(lines.contains("parallel command #1: ok in"));
+    }
+
+    #[test]
+    fn given_summary_sequential_failure_when_rendering_then_reports_skipped_and_first_failure() {
+        let hooks = vec![
+            HookDefinition {
+                command: "seq-fail".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "seq-skipped".to_string(),
+                parallel_execution_allowed: false,
+            },
+            HookDefinition {
+                command: "parallel-skipped".to_string(),
+                parallel_execution_allowed: true,
+            },
+        ];
+        let runner = FakeRunner::with_command_outcomes(vec![(
+            "seq-fail",
+            vec![PlannedResult::Exit(Some(9))],
+        )]);
+
+        let summary = run_hooks_with_runner_with_summary(&hooks, &runner, &[], None);
+
+        assert_eq!(summary.total_configured(), 3);
+        assert_eq!(summary.attempted_count(), 1);
+        assert_eq!(summary.skipped_count(), 2);
+        assert_eq!(summary.failed_count(), 1);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Sequential), 1);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Sequential), 1);
+        assert_eq!(summary.phase_attempted_count(CommandPhase::Parallel), 0);
+        assert!(matches!(summary.error(), Some(Error::ExecutionFailed(9))));
+
+        let first_failure = summary.first_failure().expect("missing first failure");
+        assert_eq!(first_failure.status_display(), "failed with code 9");
+        assert_eq!(
+            first_failure.failure_display(),
+            "sequential command #1 exited with code 9"
+        );
+    }
+
+    #[test]
+    fn given_summary_parallel_failures_when_rendering_then_first_failure_is_phase_ordered() {
+        let summary = HookRunSummary {
+            total_configured: 2,
+            total_duration: Duration::ZERO,
+            sequential_duration: Duration::ZERO,
+            parallel_duration: Duration::ZERO,
+            command_runs: vec![
+                CommandRun {
+                    phase: CommandPhase::Parallel,
+                    index: 1,
+                    duration: Duration::ZERO,
+                    outcome: CommandOutcome::Exit(7),
+                },
+                CommandRun {
+                    phase: CommandPhase::Parallel,
+                    index: 0,
+                    duration: Duration::ZERO,
+                    outcome: CommandOutcome::Exit(5),
+                },
+            ],
+        };
+
+        assert_eq!(summary.failed_count(), 2);
+        assert_eq!(summary.phase_failed_count(CommandPhase::Parallel), 2);
+        let first_failure = summary.first_failure().expect("missing first failure");
+        assert_eq!(
+            first_failure.failure_display(),
+            "parallel command #1 exited with code 5"
+        );
+        let lines = summary.text_lines(LifeCyclePhase::PreCommit).join("\n");
+        assert!(lines.contains("first failure: parallel command #1 exited with code 5"));
+    }
+
+    #[test]
+    fn given_spawn_failure_when_rendering_summary_then_status_and_error_are_redacted() {
+        let hooks = vec![HookDefinition {
+            command: "SECRET=value deploy --token super-secret-value".to_string(),
+            parallel_execution_allowed: false,
+        }];
+        let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
+            io::ErrorKind::NotFound,
+        )]);
+
+        let summary = run_hooks_with_runner_with_summary(&hooks, &runner, &[], None);
+
+        let first_failure = summary.first_failure().expect("missing first failure");
+        assert_eq!(first_failure.status_display(), "spawn failed");
+        assert!(
+            first_failure
+                .failure_display()
+                .contains("deploy <args redacted>")
+        );
+        assert!(
+            !first_failure
+                .failure_display()
+                .contains("super-secret-value")
+        );
+        assert!(matches!(
+            summary.error(),
+            Some(Error::CommandSpawnFailed { .. })
+        ));
     }
 
     #[test]
