@@ -88,6 +88,158 @@ fn given_git_smee_when_install_then_hooks_are_present() {
 }
 
 #[test]
+fn given_healthy_repo_when_doctor_then_successful_sections_are_reported() {
+    let test_repo = common::TestRepo::default();
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("git-smee doctor: Ok")
+                .and(predicate::str::contains("ok:"))
+                .and(predicate::str::contains("warnings:\n  - none"))
+                .and(predicate::str::contains("errors:\n  - none"))
+                .and(predicate::str::contains(
+                    "managed wrapper is installed for pre-commit",
+                )),
+        );
+}
+
+#[test]
+fn given_healthy_repo_when_doctor_json_then_stable_json_is_reported() {
+    let test_repo = common::TestRepo::default();
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .args(["doctor", "--json"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(r#""status": "ok""#)
+                .and(predicate::str::contains(r#""repository_root""#))
+                .and(predicate::str::contains(r#""hooks_dir""#))
+                .and(predicate::str::contains(r#""errors": []"#)),
+        );
+}
+
+#[test]
+fn given_missing_config_when_doctor_then_actionable_error_is_reported() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove config");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("errors:")
+                .and(predicate::str::contains("config problem"))
+                .and(predicate::str::contains("run git smee init")),
+        )
+        .stderr(predicate::str::contains(
+            "doctor found repository setup errors",
+        ));
+}
+
+#[test]
+fn given_malformed_config_when_doctor_then_parse_error_is_reported() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config("[[pre-commit]]\ncommand = ");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("config problem")
+                .and(predicate::str::contains("fix the TOML file")),
+        );
+}
+
+#[test]
+fn given_unmanaged_hook_when_doctor_then_collision_is_reported() {
+    let test_repo = common::TestRepo::default();
+    let pre_commit = test_repo.path.join(".git/hooks/pre-commit");
+    fs::write(&pre_commit, "#!/usr/bin/env sh\necho unmanaged\n").unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("unmanaged hook file blocks install for pre-commit")
+                .and(predicate::str::contains("git smee install --force")),
+        );
+}
+
+#[test]
+fn given_custom_hooks_path_when_doctor_then_effective_path_is_reported() {
+    let test_repo = common::TestRepo::default();
+    std::process::Command::new("git")
+        .current_dir(&test_repo.path)
+        .args(["config", "core.hooksPath", ".githooks"])
+        .status()
+        .expect("failed to configure hooksPath");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("hooks directory:")
+                .and(predicate::str::contains(".githooks"))
+                .and(predicate::str::contains("run git smee install")),
+        );
+}
+
+#[test]
+fn given_stale_managed_hook_when_doctor_then_reinstall_warning_is_reported() {
+    let test_repo = common::TestRepo::default();
+    let pre_commit = test_repo.path.join(".git/hooks/pre-commit");
+    fs::write(
+        &pre_commit,
+        format!("#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\n/old/git-smee --config old.toml run pre-commit\n"),
+    )
+    .unwrap();
+    let pre_push = test_repo.path.join(".git/hooks/pre-push");
+    fs::write(
+        &pre_push,
+        format!("#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\n/old/git-smee --config old.toml run pre-push\n"),
+    )
+    .unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("git-smee doctor: Warning")
+                .and(predicate::str::contains(
+                    "stale managed wrapper for pre-commit",
+                ))
+                .and(predicate::str::contains("run git smee install"))
+                .and(predicate::str::contains("errors:\n  - none")),
+        );
+}
+
+#[test]
 fn given_bare_repo_when_install_then_hooks_are_present() {
     let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
     git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
