@@ -137,7 +137,7 @@ fn git_rev_parse_bool(current_dir: &Path, flag: &str) -> Result<bool, Error> {
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
-        if is_not_in_repository_error(&output.stderr) {
+        if should_treat_rev_parse_failure_as_not_in_repository(current_dir, output.status.code()) {
             return Ok(false);
         }
         let stderr = stderr_or_status(&output.stderr, output.status.code());
@@ -159,7 +159,7 @@ fn git_rev_parse_path(current_dir: &Path, flag: &str) -> Result<Option<PathBuf>,
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
-        if is_not_in_repository_error(&output.stderr) {
+        if should_treat_rev_parse_failure_as_not_in_repository(current_dir, output.status.code()) {
             return Ok(None);
         }
         let stderr = stderr_or_status(&output.stderr, output.status.code());
@@ -193,10 +193,24 @@ fn git_rev_parse_path(current_dir: &Path, flag: &str) -> Result<Option<PathBuf>,
     }
 }
 
-fn is_not_in_repository_error(stderr: &[u8]) -> bool {
-    String::from_utf8_lossy(stderr)
-        .to_ascii_lowercase()
-        .contains("not a git repository")
+fn should_treat_rev_parse_failure_as_not_in_repository(
+    current_dir: &Path,
+    status_code: Option<i32>,
+) -> bool {
+    status_code == Some(128) && !has_git_repository_context(current_dir)
+}
+
+fn has_git_repository_context(current_dir: &Path) -> bool {
+    if env::var_os("GIT_DIR").is_some() || env::var_os("GIT_WORK_TREE").is_some() {
+        return true;
+    }
+
+    current_dir.ancestors().any(|ancestor| {
+        ancestor.join(".git").exists()
+            || (ancestor.join("HEAD").is_file()
+                && ancestor.join("objects").is_dir()
+                && ancestor.join("refs").is_dir())
+    })
 }
 
 fn stderr_or_status(stderr: &[u8], status_code: Option<i32>) -> String {
@@ -424,6 +438,43 @@ mod tests {
         let result = find_git_root_from_path(&nested);
 
         assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_git_reports_not_repo_in_non_english_when_finding_root_then_returns_not_in_repo() {
+        let _guard = process_state_lock();
+        let temp_dir = TempDir::new().unwrap();
+        let git_bin_dir = temp_dir.path().join("bin");
+        fs::create_dir(&git_bin_dir).unwrap();
+        write_fake_git_that_reports_not_repo_in_non_english(&git_bin_dir);
+
+        let original_path = env::var_os("PATH");
+        let fake_path = prepend_to_path(&git_bin_dir, original_path.as_ref());
+        unsafe { env::set_var("PATH", fake_path) };
+
+        let result = find_git_root_from_path(temp_dir.path());
+
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_git_repo_has_malformed_config_when_finding_root_then_surfaces_rev_parse_error() {
+        let _guard = process_state_lock();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        fs::write(temp_dir.path().join(".git").join("config"), "[broken\n").unwrap();
+
+        let result = find_git_root_from_path(temp_dir.path());
+
+        assert!(matches!(
+            result,
+            Err(Error::FailedToQueryGitRevParse { .. })
+        ));
     }
 
     #[test]
@@ -743,6 +794,41 @@ mod tests {
             .strip_prefix("//?/")
             .unwrap_or(&normalized)
             .to_string()
+    }
+
+    fn prepend_to_path(
+        new_entry: &Path,
+        original_path: Option<&std::ffi::OsString>,
+    ) -> std::ffi::OsString {
+        let mut entries = vec![new_entry.to_path_buf()];
+        if let Some(original_path) = original_path {
+            entries.extend(env::split_paths(original_path));
+        }
+        env::join_paths(entries).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn write_fake_git_that_reports_not_repo_in_non_english(bin_dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let git_path = bin_dir.join("git");
+        fs::write(
+            &git_path,
+            "#!/bin/sh\necho 'fatal: no es un repositorio git' >&2\nexit 128\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&git_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&git_path, permissions).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn write_fake_git_that_reports_not_repo_in_non_english(bin_dir: &Path) {
+        fs::write(
+            bin_dir.join("git.cmd"),
+            "@echo off\r\necho fatal: no es un repositorio git 1>&2\r\nexit /b 128\r\n",
+        )
+        .unwrap();
     }
 
     #[test]
