@@ -137,7 +137,7 @@ fn git_rev_parse_bool(current_dir: &Path, flag: &str) -> Result<bool, Error> {
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
-        if is_not_in_repository_exit(output.status.code()) {
+        if should_treat_rev_parse_failure_as_not_in_repository(current_dir, output.status.code()) {
             return Ok(false);
         }
         let stderr = stderr_or_status(&output.stderr, output.status.code());
@@ -159,7 +159,7 @@ fn git_rev_parse_path(current_dir: &Path, flag: &str) -> Result<Option<PathBuf>,
         .map_err(Error::FailedToExecuteGit)?;
 
     if !output.status.success() {
-        if is_not_in_repository_exit(output.status.code()) {
+        if should_treat_rev_parse_failure_as_not_in_repository(current_dir, output.status.code()) {
             return Ok(None);
         }
         let stderr = stderr_or_status(&output.stderr, output.status.code());
@@ -193,8 +193,24 @@ fn git_rev_parse_path(current_dir: &Path, flag: &str) -> Result<Option<PathBuf>,
     }
 }
 
-fn is_not_in_repository_exit(status_code: Option<i32>) -> bool {
-    status_code == Some(128)
+fn should_treat_rev_parse_failure_as_not_in_repository(
+    current_dir: &Path,
+    status_code: Option<i32>,
+) -> bool {
+    status_code == Some(128) && !has_git_repository_context(current_dir)
+}
+
+fn has_git_repository_context(current_dir: &Path) -> bool {
+    if env::var_os("GIT_DIR").is_some() || env::var_os("GIT_WORK_TREE").is_some() {
+        return true;
+    }
+
+    current_dir.ancestors().any(|ancestor| {
+        ancestor.join(".git").exists()
+            || (ancestor.join("HEAD").is_file()
+                && ancestor.join("objects").is_dir()
+                && ancestor.join("refs").is_dir())
+    })
 }
 
 fn stderr_or_status(stderr: &[u8], status_code: Option<i32>) -> String {
@@ -444,6 +460,21 @@ mod tests {
         }
 
         assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_git_repo_has_malformed_config_when_finding_root_then_surfaces_rev_parse_error() {
+        let _guard = process_state_lock();
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init"]);
+        fs::write(temp_dir.path().join(".git").join("config"), "[broken\n").unwrap();
+
+        let result = find_git_root_from_path(temp_dir.path());
+
+        assert!(matches!(
+            result,
+            Err(Error::FailedToQueryGitRevParse { .. })
+        ));
     }
 
     #[test]
