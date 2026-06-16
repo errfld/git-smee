@@ -232,7 +232,13 @@ protocol handshake before the command starts.
 git smee init [--force] [--config <path>]       # Initialize a config file
 git smee install [--force] [--config <path>]    # Install hooks from the selected config
 git smee [--config <path>] run <hook> [hook-args...]           # Run a specific git hook
+git smee [--config <path>] doctor [--json]      # Diagnose repository setup and hook drift
 ```
+
+Run `git smee doctor` when onboarding a repository, after changing `core.hooksPath`, or when a
+hook does not fire as expected. The human-readable report groups `ok`, `warnings`, and `errors`
+with remediation commands; `--json` emits the same stable fields for automation. Doctor exits
+successfully when no errors are present and exits non-zero when setup errors need action.
 
 ## How it works (high level)
 
