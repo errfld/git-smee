@@ -124,6 +124,28 @@ jobs:
           "asset=$asset" >> $env:GITHUB_OUTPUT
           "checksum=$asset.sha256" >> $env:GITHUB_OUTPUT
 
+      # Verify the archive we are about to publish, not just the build output.
+      - name: Smoke test Unix release archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p smoke-test
+          tar -xzf "${{ steps.package-unix.outputs.asset }}" -C smoke-test
+          test -x smoke-test/git-smee
+          smoke-test/git-smee --version
+
+      # Verify the archive we are about to publish, not just the build output.
+      - name: Smoke test Windows release archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path smoke-test | Out-Null
+          Expand-Archive -Path "${{ steps.package-windows.outputs.asset }}" -DestinationPath smoke-test -Force
+          if (-not (Test-Path "smoke-test/git-smee.exe")) {
+            throw "missing packaged git-smee.exe"
+          }
+          & "smoke-test/git-smee.exe" --version
+
       - name: Upload Unix release assets
         if: runner.os != 'Windows'
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
