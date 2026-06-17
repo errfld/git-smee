@@ -128,9 +128,11 @@ jobs:
       - name: Smoke test Unix release archive
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          ASSET: ${{ steps.package-unix.outputs.asset }}
         run: |
           mkdir -p smoke-test
-          tar -xzf "${{ steps.package-unix.outputs.asset }}" -C smoke-test
+          tar -xzf "$ASSET" -C smoke-test
           test -x smoke-test/git-smee
           smoke-test/git-smee --version
 
@@ -138,9 +140,11 @@ jobs:
       - name: Smoke test Windows release archive
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          ASSET: ${{ steps.package-windows.outputs.asset }}
         run: |
           New-Item -ItemType Directory -Force -Path smoke-test | Out-Null
-          Expand-Archive -Path "${{ steps.package-windows.outputs.asset }}" -DestinationPath smoke-test -Force
+          Expand-Archive -Path $env:ASSET -DestinationPath smoke-test -Force
           if (-not (Test-Path "smoke-test/git-smee.exe")) {
             throw "missing packaged git-smee.exe"
           }
