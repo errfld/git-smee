@@ -1,4 +1,4 @@
-use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, platform::Platform};
+use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, config::LifeCyclePhase, platform::Platform};
 use std::{
     fs,
     io::Read,
@@ -68,6 +68,12 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    #[error("Failed to remove obsolete managed hook '{path}': {source}")]
+    FailedToRemoveObsoleteHook {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("Failed to write config file '{path}': {source}")]
     FailedToWriteConfigFile {
         path: String,
@@ -118,6 +124,11 @@ pub enum Error {
 pub trait HookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error>;
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error>;
+
+    fn prune_obsolete_hooks(&self, active_hook_names: &[String]) -> Result<(), Error> {
+        let _ = active_hook_names;
+        Ok(())
+    }
 }
 
 pub struct FileSystemHookInstaller {
@@ -313,6 +324,29 @@ impl FileSystemHookInstaller {
     fn ensure_can_write_config(&self, config_file: &Path) -> Result<(), Error> {
         ensure_can_write_config_file(config_file, self.force_overwrite)
     }
+
+    fn prune_obsolete_managed_hook(
+        &self,
+        hook_name: &str,
+        active_hook_names: &[String],
+    ) -> Result<(), Error> {
+        if active_hook_names
+            .iter()
+            .any(|active_hook| active_hook == hook_name)
+        {
+            return Ok(());
+        }
+
+        let hook_file = self.hooks_dir.join(hook_name);
+        if !hook_file.exists() || !is_managed_file(&hook_file)? {
+            return Ok(());
+        }
+
+        fs::remove_file(&hook_file).map_err(|source| Error::FailedToRemoveObsoleteHook {
+            path: hook_file.to_string_lossy().to_string(),
+            source,
+        })
+    }
 }
 
 impl HookInstaller for FileSystemHookInstaller {
@@ -336,6 +370,13 @@ impl HookInstaller for FileSystemHookInstaller {
             }
         })?;
         Ok(config_path)
+    }
+
+    fn prune_obsolete_hooks(&self, active_hook_names: &[String]) -> Result<(), Error> {
+        for phase in LifeCyclePhase::all() {
+            self.prune_obsolete_managed_hook(phase.as_str(), active_hook_names)?;
+        }
+        Ok(())
     }
 }
 
@@ -476,6 +517,7 @@ pub fn install_hooks_with_options<T: HookInstaller>(
     };
     let mut phases: Vec<_> = config.hooks.keys().copied().collect();
     phases.sort_by_key(|phase| phase.as_str());
+    let active_hook_names: Vec<_> = phases.iter().map(|phase| phase.to_string()).collect();
     phases
         .into_iter()
         .map(|life_cycle_phase| {
@@ -493,6 +535,7 @@ pub fn install_hooks_with_options<T: HookInstaller>(
             Ok(())
         })
         .collect::<Result<Vec<_>, Error>>()?;
+    hook_installer.prune_obsolete_hooks(&active_hook_names)?;
     Ok(())
 }
 
