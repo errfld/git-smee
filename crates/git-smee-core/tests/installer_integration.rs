@@ -277,6 +277,48 @@ fn given_managed_existing_hook_when_installing_without_force_then_it_is_overwrit
 }
 
 #[test]
+fn given_managed_hook_phase_removed_when_reinstalling_then_obsolete_hook_is_pruned() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let full_config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    installer::install_hooks(&full_config, &installer).unwrap();
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_commit = hooks_path.join("pre-commit");
+    let pre_push = hooks_path.join("pre-push");
+    assert!(pre_commit.exists());
+    assert!(pre_push.exists());
+
+    let config_without_pre_push = pre_commit_only_config();
+    installer::install_hooks(&config_without_pre_push, &installer).unwrap();
+
+    assert!(pre_commit.exists());
+    assert!(!pre_push.exists());
+}
+
+#[test]
+fn given_unmanaged_hook_for_removed_phase_when_reinstalling_then_hook_is_preserved() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let pre_push = hooks_path.join("pre-push");
+    let unmanaged_content = "#!/usr/bin/env sh\necho 'custom pre-push'\n";
+    fs::write(&pre_push, unmanaged_content).unwrap();
+
+    let config_without_pre_push = pre_commit_only_config();
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    installer::install_hooks(&config_without_pre_push, &installer).unwrap();
+
+    assert_eq!(fs::read_to_string(pre_push).unwrap(), unmanaged_content);
+}
+
+#[test]
 fn given_managed_marker_after_shebang_and_blank_line_when_installing_then_it_is_overwritten() {
     let temp_dir = tempfile::tempdir().unwrap();
     let repo = temp_dir.path().join("repo");
@@ -498,6 +540,18 @@ fn write_config_fixture(repo: &Path) {
     let config_content = fs::read_to_string("tests/fixtures/simple_git-smee_config.toml")
         .expect("Should read fixture file");
     fs::write(repo.join(DEFAULT_CONFIG_FILE_NAME), config_content).unwrap();
+}
+
+fn pre_commit_only_config() -> SmeeConfig {
+    let mut hooks = std::collections::HashMap::new();
+    hooks.insert(
+        git_smee_core::config::LifeCyclePhase::PreCommit,
+        vec![git_smee_core::config::HookDefinition {
+            command: "echo pre-commit".to_string(),
+            parallel_execution_allowed: false,
+        }],
+    );
+    SmeeConfig { hooks }
 }
 
 fn read_config_from_repo(repo: &Path) -> SmeeConfig {

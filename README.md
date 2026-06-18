@@ -74,6 +74,9 @@ cargo install --path crates/git-smee-cli
 
    By default, `install` only overwrites hook files previously managed by git-smee.
    Existing unmanaged hook files are preserved unless you pass `--force`.
+   When a hook phase is removed from `.git-smee.toml`, `install` also prunes
+   the now-obsolete managed wrapper for that phase so stale hooks do not keep
+   running; unmanaged files for removed phases are left untouched.
    If the repository uses `core.hooksPath` and that directory does not exist yet,
    `install` creates the effective hooks directory before writing managed wrappers.
 
