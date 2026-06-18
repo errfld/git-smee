@@ -5,13 +5,10 @@ REM THIS FILE IS MANAGED BY git-smee
 set "GIT_SMEE_BIN={git_smee_executable}"
 set "GIT_SMEE_CONFIG={config_path}"
 
-if exist "%GIT_SMEE_BIN%" (
-  "%GIT_SMEE_BIN%" --config "%GIT_SMEE_CONFIG%" run {hook} %*
-) else (
-  where git-smee >nul 2>nul
-  if errorlevel 1 (
-    git smee --config "%GIT_SMEE_CONFIG%" run {hook} %*
-  ) else (
-    git-smee --config "%GIT_SMEE_CONFIG%" run {hook} %*
-  )
+if not exist "%GIT_SMEE_BIN%" (
+  echo git-smee: embedded git-smee executable is not available: "%GIT_SMEE_BIN%" 1>&2
+  echo git-smee: run "git smee install" again to refresh this hook wrapper. 1>&2
+  exit /b 127
 )
+
+"%GIT_SMEE_BIN%" --config "%GIT_SMEE_CONFIG%" run {hook} %*

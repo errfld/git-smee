@@ -6,7 +6,9 @@ use std::{
 
 use git_smee_core::{
     DEFAULT_CONFIG_FILE_NAME, SmeeConfig,
-    installer::{self, Error, FileSystemHookInstaller, HookInstaller, MANAGED_FILE_MARKER},
+    installer::{
+        self, Error, FileSystemHookInstaller, HookInstaller, HookScriptOptions, MANAGED_FILE_MARKER,
+    },
 };
 
 #[test]
@@ -28,6 +30,56 @@ fn given_standard_repo_when_installing_hooks_then_hooks_are_written_to_git_hooks
     );
     assert!(hooks_path.join("pre-commit").exists());
     assert!(hooks_path.join("pre-push").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn given_stale_embedded_binary_when_running_installed_hook_then_path_fallback_is_not_used() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let fake_path_bin = temp_dir.path().join("path-bin");
+    fs::create_dir(&fake_path_bin).unwrap();
+    let fallback_marker = temp_dir.path().join("fallback-used");
+    let fallback = fake_path_bin.join("git-smee");
+    fs::write(
+        &fallback,
+        format!("#!/usr/bin/env sh\ntouch '{}'\n", fallback_marker.display()),
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&fallback).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&fallback, perms).unwrap();
+
+    let missing_git_smee = temp_dir.path().join("missing").join("git-smee");
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let options = HookScriptOptions::new(
+        missing_git_smee.clone(),
+        repo.join(DEFAULT_CONFIG_FILE_NAME),
+    );
+    installer::install_hooks_with_options(&config, &installer, &options).unwrap();
+
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let test_path = std::env::join_paths(
+        std::iter::once(fake_path_bin.clone()).chain(std::env::split_paths(&original_path)),
+    )
+    .unwrap();
+    let output = Command::new(resolve_hooks_path_with_git(&repo).join("pre-commit"))
+        .env("PATH", test_path)
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(127));
+    assert!(!fallback_marker.exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("embedded git-smee executable is not available"));
+    assert!(stderr.contains(&missing_git_smee.to_string_lossy().to_string()));
 }
 
 #[test]
