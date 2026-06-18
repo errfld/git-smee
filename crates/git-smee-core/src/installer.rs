@@ -782,6 +782,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn unix_hook_template_does_not_fall_back_to_path_when_embedded_binary_is_stale() {
+        let template = Platform::Unix.hook_script_template();
+
+        assert!(!template.contains("command -v git-smee"));
+        assert!(!template.contains("git-smee --config"));
+        assert!(!template.contains("git smee --config"));
+        assert!(template.contains("embedded git-smee executable is not available"));
+    }
+
+    #[test]
+    fn windows_hook_template_does_not_fall_back_to_path_when_embedded_binary_is_stale() {
+        let template = Platform::Windows.hook_script_template();
+
+        assert!(!template.contains("where git-smee"));
+        assert!(!template.contains("git-smee --config"));
+        assert!(!template.contains("git smee --config"));
+        assert!(template.contains("embedded git-smee executable is not available"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn given_special_paths_when_installing_hooks_then_unix_hook_contains_escaped_values() {

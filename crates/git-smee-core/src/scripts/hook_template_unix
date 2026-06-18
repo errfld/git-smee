@@ -7,10 +7,10 @@ set -e
 GIT_SMEE_BIN={git_smee_executable}
 GIT_SMEE_CONFIG={config_path}
 
-if [ -x "$GIT_SMEE_BIN" ]; then
-  "$GIT_SMEE_BIN" --config "$GIT_SMEE_CONFIG" run {hook} "$@"
-elif command -v git-smee >/dev/null 2>&1; then
-  git-smee --config "$GIT_SMEE_CONFIG" run {hook} "$@"
-else
-  git smee --config "$GIT_SMEE_CONFIG" run {hook} "$@"
+if [ ! -x "$GIT_SMEE_BIN" ]; then
+  echo "git-smee: embedded git-smee executable is not available: $GIT_SMEE_BIN" >&2
+  echo "git-smee: run 'git smee install' again to refresh this hook wrapper." >&2
+  exit 127
 fi
+
+"$GIT_SMEE_BIN" --config "$GIT_SMEE_CONFIG" run {hook} "$@"
