@@ -232,6 +232,35 @@ fn given_unmanaged_existing_hook_when_installing_without_force_then_error_and_fi
 }
 
 #[test]
+fn given_later_unmanaged_hook_when_installing_without_force_then_no_earlier_hooks_are_written() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    fs::write(
+        repo.join(DEFAULT_CONFIG_FILE_NAME),
+        "[[applypatch-msg]]\ncommand = \"echo one\"\n\n[[pre-commit]]\ncommand = \"echo two\"\n",
+    )
+    .unwrap();
+
+    let hooks_path = resolve_hooks_path_with_git(&repo);
+    let applypatch_msg = hooks_path.join("applypatch-msg");
+    let pre_commit = hooks_path.join("pre-commit");
+    let unmanaged_content = "#!/usr/bin/env sh\necho 'custom unmanaged hook'\n";
+    fs::write(&pre_commit, unmanaged_content).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let result = installer::install_hooks(&config, &installer);
+
+    assert!(matches!(
+        result,
+        Err(Error::RefusingToOverwriteUnmanagedHookFile { .. })
+    ));
+    assert!(!applypatch_msg.exists());
+    assert_eq!(fs::read_to_string(pre_commit).unwrap(), unmanaged_content);
+}
+
+#[test]
 fn given_hook_with_marker_only_in_body_when_installing_without_force_then_treated_as_unmanaged() {
     let temp_dir = tempfile::tempdir().unwrap();
     let repo = temp_dir.path().join("repo");

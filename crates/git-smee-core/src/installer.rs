@@ -122,6 +122,11 @@ pub enum Error {
 /// The trait defines a rough shape for anything that might install a hook. However the most common implementation
 /// will be a [`FileSystemHookInstaller`]
 pub trait HookInstaller {
+    fn prepare_install_hooks(&self, hook_names: &[String]) -> Result<(), Error> {
+        let _ = hook_names;
+        Ok(())
+    }
+
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error>;
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error>;
 
@@ -350,6 +355,14 @@ impl FileSystemHookInstaller {
 }
 
 impl HookInstaller for FileSystemHookInstaller {
+    fn prepare_install_hooks(&self, hook_names: &[String]) -> Result<(), Error> {
+        for hook_name in hook_names {
+            let hook_file = self.hooks_dir.join(hook_name);
+            self.ensure_can_write_hook(&hook_file)?;
+        }
+        Ok(())
+    }
+
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
         let hook_file = self.hooks_dir.join(hook_name);
         self.ensure_can_write_hook(&hook_file)?;
@@ -518,6 +531,7 @@ pub fn install_hooks_with_options<T: HookInstaller>(
     let mut phases: Vec<_> = config.hooks.keys().copied().collect();
     phases.sort_by_key(|phase| phase.as_str());
     let active_hook_names: Vec<_> = phases.iter().map(|phase| phase.to_string()).collect();
+    hook_installer.prepare_install_hooks(&active_hook_names)?;
     phases
         .into_iter()
         .map(|life_cycle_phase| {
