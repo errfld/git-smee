@@ -103,6 +103,10 @@ pub enum Error {
         "Refusing to overwrite existing managed config file '{path}'. Re-run with --force to overwrite."
     )]
     RefusingToOverwriteManagedConfigFile { path: String },
+    #[error(
+        "Refusing to write managed file through symlink '{path}'. Remove the symlink and retry."
+    )]
+    RefusingToWriteSymlink { path: String },
     #[error("Failed to read existing file '{path}' while checking managed marker: {source}")]
     FailedToReadExistingFile {
         path: String,
@@ -300,6 +304,8 @@ impl FileSystemHookInstaller {
         config_file: &Path,
         force_overwrite: bool,
     ) -> Result<(), Error> {
+        ensure_not_symlink(config_file)?;
+
         if !config_file.exists() || force_overwrite {
             return Ok(());
         }
@@ -313,6 +319,8 @@ impl FileSystemHookInstaller {
     }
 
     fn ensure_can_write_hook(&self, hook_file: &Path) -> Result<(), Error> {
+        ensure_not_symlink(hook_file)?;
+
         if !hook_file.exists() || self.force_overwrite {
             return Ok(());
         }
@@ -416,6 +424,8 @@ pub fn write_config_file(
 }
 
 fn ensure_can_write_config_file(config_file: &Path, force_overwrite: bool) -> Result<(), Error> {
+    ensure_not_symlink(config_file)?;
+
     if config_file.exists() && !config_file.is_file() {
         return Err(Error::ConfigPathNotAFile {
             path: config_file.to_string_lossy().to_string(),
@@ -432,6 +442,20 @@ fn ensure_can_write_config_file(config_file: &Path, force_overwrite: bool) -> Re
     }
 
     Err(Error::RefusingToOverwriteUnmanagedConfigFile { path })
+}
+
+fn ensure_not_symlink(path: &Path) -> Result<(), Error> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::RefusingToWriteSymlink {
+            path: path.to_string_lossy().to_string(),
+        }),
+        Ok(_) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(Error::FailedToReadExistingFile {
+            path: path.to_string_lossy().to_string(),
+            source,
+        }),
+    }
 }
 
 fn is_managed_file(path: &Path) -> Result<bool, Error> {
