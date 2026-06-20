@@ -227,33 +227,42 @@ fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::
                 )),
             )
         } else {
-            match fs::read_to_string(&hook_path) {
-                Ok(content) if !content.contains(MANAGED_FILE_MARKER) => (
+            match installer::has_managed_header(&hook_path) {
+                Ok(false) => (
                     HookState::Unmanaged,
                     Some(format!(
                         "move {} aside or run git smee install --force",
                         display_repo_path(&repository_root, &hook_path)
                     )),
                 ),
-                Ok(content) => {
-                    if !content.contains(&expected_config) {
-                        stale_reasons.push(format!("expected config path {expected_config}"));
-                    }
-                    if let Some(expected_exe) = &expected_exe {
-                        let expected_exe = expected_exe.to_string_lossy().to_string();
-                        if !content.contains(&expected_exe) {
-                            stale_reasons.push(format!("expected executable {expected_exe}"));
+                Ok(true) => match fs::read_to_string(&hook_path) {
+                    Ok(content) => {
+                        if !content.contains(&expected_config) {
+                            stale_reasons.push(format!("expected config path {expected_config}"));
+                        }
+                        if let Some(expected_exe) = &expected_exe {
+                            let expected_exe = expected_exe.to_string_lossy().to_string();
+                            if !content.contains(&expected_exe) {
+                                stale_reasons.push(format!("expected executable {expected_exe}"));
+                            }
+                        }
+                        if stale_reasons.is_empty() {
+                            (HookState::Installed, None)
+                        } else {
+                            (
+                                HookState::Stale,
+                                Some(format!("run git smee install to refresh {phase}")),
+                            )
                         }
                     }
-                    if stale_reasons.is_empty() {
-                        (HookState::Installed, None)
-                    } else {
-                        (
-                            HookState::Stale,
-                            Some(format!("run git smee install to refresh {phase}")),
-                        )
-                    }
-                }
+                    Err(error) => (
+                        HookState::Unreadable,
+                        Some(format!(
+                            "fix permissions for {} ({error})",
+                            display_repo_path(&repository_root, &hook_path)
+                        )),
+                    ),
+                },
                 Err(error) => (
                     HookState::Unreadable,
                     Some(format!(
@@ -287,10 +296,10 @@ fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::
         if !hook_path.is_file() {
             continue;
         }
-        let Ok(content) = fs::read_to_string(&hook_path) else {
+        let Ok(is_managed) = installer::has_managed_header(&hook_path) else {
             continue;
         };
-        if content.contains(MANAGED_FILE_MARKER) {
+        if is_managed {
             let path = display_repo_path(&repository_root, &hook_path);
             let next_action = format!("remove obsolete managed hook {path}");
             next_actions.push(next_action.clone());
@@ -323,7 +332,7 @@ fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::
 }
 
 fn print_status_report(report: &StatusReport) {
-    println!("git-smee status: {:?}", report.status);
+    println!("git-smee status: {}", report.status.as_text());
     println!("repository root: {}", report.repository_root);
     println!("hooks directory: {}", report.hooks_dir);
     println!("config path: {}", report.config_path);
@@ -371,6 +380,15 @@ impl HookState {
             HookState::Stale => "stale",
             HookState::Unreadable => "unreadable",
             HookState::InvalidPath => "invalid path",
+        }
+    }
+}
+
+impl StatusState {
+    fn as_text(&self) -> &'static str {
+        match self {
+            StatusState::Ok => "Ok",
+            StatusState::Drift => "Drift",
         }
     }
 }

@@ -222,6 +222,52 @@ fn given_stale_and_obsolete_managed_hooks_when_status_then_reports_drift_without
 }
 
 #[test]
+fn given_marker_only_in_body_when_status_then_treats_hook_as_unmanaged() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config(
+        r#"
+        [[commit-msg]]
+        command = "echo commit message"
+        "#,
+    );
+    let commit_msg = test_repo.path.join(".git/hooks/commit-msg");
+    fs::write(
+        &commit_msg,
+        format!("#!/usr/bin/env sh\necho '{MANAGED_FILE_MARKER}'\n"),
+    )
+    .unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("commit-msg: configured commands=1, unmanaged")
+                .and(predicate::str::contains("obsolete managed wrapper").not())
+                .and(predicate::str::contains("run git smee install --force")),
+        );
+}
+
+#[test]
+fn given_unconfigured_marker_only_in_body_when_status_then_does_not_recommend_removal() {
+    let test_repo = common::TestRepo::default();
+    let commit_msg = test_repo.path.join(".git/hooks/commit-msg");
+    fs::write(
+        &commit_msg,
+        format!("#!/usr/bin/env sh\necho '{MANAGED_FILE_MARKER}'\n"),
+    )
+    .unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("obsolete managed wrapper").not());
+}
+
+#[test]
 fn given_drift_when_status_json_then_stable_json_is_reported() {
     let test_repo = common::TestRepo::default();
 
