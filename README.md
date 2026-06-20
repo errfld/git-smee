@@ -235,8 +235,32 @@ protocol handshake before the command starts.
 git smee init [--force] [--config <path>]       # Initialize a config file
 git smee install [--force] [--config <path>]    # Install hooks from the selected config
 git smee [--config <path>] run <hook> [hook-args...]           # Run a specific git hook
+git smee [--config <path>] status [--json]      # Show hook coverage and drift
 git smee [--config <path>] doctor [--json]      # Diagnose repository setup and hook drift
 ```
+
+Run `git smee status` as a read-only onboarding or CI smoke check after editing
+`.git-smee.toml` or reinstalling wrappers. It summarizes each configured phase,
+command counts, missing/unmanaged/stale wrappers, obsolete managed wrappers, and
+next actions. For example:
+
+```text
+git-smee status: Drift
+configured hooks:
+  - pre-commit: configured commands=1, installed (.git/hooks/pre-commit)
+  - pre-push: configured commands=1, missing (.git/hooks/pre-push)
+    next: run git smee install to create pre-push
+obsolete managed hooks:
+  - commit-msg: obsolete managed wrapper (.git/hooks/commit-msg)
+    next: remove obsolete managed hook .git/hooks/commit-msg
+next actions:
+  - remove obsolete managed hook .git/hooks/commit-msg
+  - run git smee install to create pre-push
+```
+
+Use `git smee status --json` when tooling needs stable fields such as `status`,
+`hooks[].configured_command_count`, `hooks[].state`, `obsolete_managed_hooks`, and
+`next_actions`.
 
 Run `git smee doctor` when onboarding a repository, after changing `core.hooksPath`, or when a
 hook does not fire as expected. The human-readable report groups `ok`, `warnings`, and `errors`

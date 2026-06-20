@@ -458,6 +458,15 @@ fn ensure_not_symlink(path: &Path) -> Result<(), Error> {
     }
 }
 
+/// Returns true when a file has git-smee's managed marker in its header.
+///
+/// The marker must appear in the same header position accepted by installer
+/// overwrite/pruning logic; marker text later in a hook body is treated as
+/// user-owned content.
+pub fn has_managed_header(path: &Path) -> Result<bool, Error> {
+    is_managed_file(path)
+}
+
 fn is_managed_file(path: &Path) -> Result<bool, Error> {
     let mut file = fs::File::open(path).map_err(|source| Error::FailedToReadExistingFile {
         path: path.to_string_lossy().to_string(),
