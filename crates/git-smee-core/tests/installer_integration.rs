@@ -479,6 +479,30 @@ fn given_unmanaged_existing_hook_when_installing_with_force_then_it_is_overwritt
     assert!(installed.contains("run pre-commit"));
 }
 
+#[cfg(unix)]
+#[test]
+fn given_hook_path_is_symlink_when_installing_with_force_then_refuses_and_target_unchanged() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let outside_target = temp_dir.path().join("outside-hook-target");
+    let outside_content = "outside target must not be overwritten\n";
+    fs::write(&outside_target, outside_content).unwrap();
+    let pre_commit = resolve_hooks_path_with_git(&repo).join("pre-commit");
+    symlink(&outside_target, &pre_commit).unwrap();
+
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path_with_force(repo.clone(), true).unwrap();
+    let result = installer::install_hooks(&config, &installer);
+
+    assert!(matches!(result, Err(Error::RefusingToWriteSymlink { .. })));
+    assert_eq!(fs::read_to_string(outside_target).unwrap(), outside_content);
+}
+
 #[test]
 fn given_existing_config_when_initializing_without_force_then_refuses_overwrite() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -558,6 +582,28 @@ fn given_existing_config_when_initializing_with_force_then_overwrites() {
 
     let updated = fs::read_to_string(config_path).unwrap();
     assert!(updated.contains("echo default"));
+}
+
+#[cfg(unix)]
+#[test]
+fn given_config_path_is_symlink_when_initializing_with_force_then_refuses_and_target_unchanged() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+
+    let outside_target = temp_dir.path().join("outside-config-target.toml");
+    let outside_content = "[[pre-commit]]\ncommand = \"echo outside\"\n";
+    fs::write(&outside_target, outside_content).unwrap();
+    let config_path = repo.join(DEFAULT_CONFIG_FILE_NAME);
+    symlink(&outside_target, &config_path).unwrap();
+
+    let installer = FileSystemHookInstaller::from_path_with_force(repo.clone(), true).unwrap();
+    let result = installer.install_config_file("[[pre-commit]]\ncommand = \"echo default\"\n");
+
+    assert!(matches!(result, Err(Error::RefusingToWriteSymlink { .. })));
+    assert_eq!(fs::read_to_string(outside_target).unwrap(), outside_content);
 }
 
 fn init_repo(repo: &Path) {
