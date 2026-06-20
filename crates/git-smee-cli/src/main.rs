@@ -380,6 +380,7 @@ fn display_repo_path(repository_root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+        .replace('\\', "/")
 }
 
 #[derive(Debug, Serialize)]
