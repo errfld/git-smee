@@ -135,6 +135,111 @@ fn given_healthy_repo_when_doctor_json_then_stable_json_is_reported() {
 }
 
 #[test]
+fn given_installed_hooks_when_status_then_reports_coverage() {
+    let test_repo = common::TestRepo::default();
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("git-smee status: Ok")
+                .and(predicate::str::contains(
+                    "pre-commit: configured commands=1, installed",
+                ))
+                .and(predicate::str::contains(
+                    "pre-push: configured commands=1, installed",
+                ))
+                .and(predicate::str::contains("next actions:\n  - none")),
+        );
+}
+
+#[test]
+fn given_missing_and_unmanaged_hooks_when_status_then_reports_next_actions() {
+    let test_repo = common::TestRepo::default();
+    let pre_commit = test_repo.path.join(".git/hooks/pre-commit");
+    fs::write(&pre_commit, "#!/usr/bin/env sh\necho unmanaged\n").unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("git-smee status: Drift")
+                .and(predicate::str::contains(
+                    "pre-commit: configured commands=1, unmanaged",
+                ))
+                .and(predicate::str::contains(
+                    "pre-push: configured commands=1, missing",
+                ))
+                .and(predicate::str::contains("run git smee install --force"))
+                .and(predicate::str::contains("run git smee install")),
+        );
+}
+
+#[test]
+fn given_stale_and_obsolete_managed_hooks_when_status_then_reports_drift_without_modifying() {
+    let test_repo = common::TestRepo::default();
+    let pre_commit = test_repo.path.join(".git/hooks/pre-commit");
+    fs::write(
+        &pre_commit,
+        format!("#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\n/old/git-smee --config old.toml run pre-commit\n"),
+    )
+    .unwrap();
+    let obsolete = test_repo.path.join(".git/hooks/commit-msg");
+    fs::write(
+        &obsolete,
+        format!("#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\n/old/git-smee run commit-msg\n"),
+    )
+    .unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("pre-commit: configured commands=1, stale")
+                .and(predicate::str::contains(
+                    "commit-msg: obsolete managed wrapper",
+                ))
+                .and(predicate::str::contains(
+                    "remove obsolete managed hook .git/hooks/commit-msg",
+                )),
+        );
+
+    assert!(
+        obsolete.exists(),
+        "status must not remove obsolete managed hooks"
+    );
+}
+
+#[test]
+fn given_drift_when_status_json_then_stable_json_is_reported() {
+    let test_repo = common::TestRepo::default();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .args(["status", "--json"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains(r#""status": "drift""#)
+                .and(predicate::str::contains(r#""phase": "pre-commit""#))
+                .and(predicate::str::contains(r#""configured_command_count": 1"#))
+                .and(predicate::str::contains(r#""state": "missing""#))
+                .and(predicate::str::contains(r#""next_actions""#)),
+        );
+}
+
+#[test]
 fn given_missing_config_when_doctor_then_actionable_error_is_reported() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove config");
