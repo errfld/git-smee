@@ -1,7 +1,7 @@
 use crate::{DEFAULT_CONFIG_FILE_NAME, SmeeConfig, config::LifeCyclePhase, platform::Platform};
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 use thiserror::Error;
@@ -374,7 +374,7 @@ impl HookInstaller for FileSystemHookInstaller {
     fn install_hook(&self, hook_name: &str, hook_content: &str) -> Result<PathBuf, Error> {
         let hook_file = self.hooks_dir.join(hook_name);
         self.ensure_can_write_hook(&hook_file)?;
-        fs::write(&hook_file, hook_content).map_err(|source| Error::FailedToWriteHook {
+        atomic_write_file(&hook_file, hook_content).map_err(|source| Error::FailedToWriteHook {
             path: hook_file.to_string_lossy().to_string(),
             source,
         })?;
@@ -384,7 +384,7 @@ impl HookInstaller for FileSystemHookInstaller {
     fn install_config_file(&self, config_content: &str) -> Result<PathBuf, Error> {
         let config_path = self.repository_root.join(DEFAULT_CONFIG_FILE_NAME);
         self.ensure_can_write_config(&config_path)?;
-        fs::write(&config_path, config_content).map_err(|source| {
+        atomic_write_file(&config_path, config_content).map_err(|source| {
             Error::FailedToWriteConfigFile {
                 path: config_path.to_string_lossy().to_string(),
                 source,
@@ -417,10 +417,40 @@ pub fn write_config_file(
             source,
         })?;
     }
-    fs::write(config_path, config_content).map_err(|source| Error::FailedToWriteConfigFile {
-        path: config_path.to_string_lossy().to_string(),
-        source,
+    atomic_write_file(config_path, config_content).map_err(|source| {
+        Error::FailedToWriteConfigFile {
+            path: config_path.to_string_lossy().to_string(),
+            source,
+        }
     })
+}
+
+fn atomic_write_file(path: &Path, content: &str) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temp_file = tempfile::Builder::new()
+        .prefix(".git-smee-")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
+
+    temp_file.write_all(content.as_bytes())?;
+    temp_file.flush()?;
+    temp_file.as_file().sync_all()?;
+    temp_file.persist(path).map_err(|error| error.error)?;
+    sync_parent_dir(parent)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> std::io::Result<()> {
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_parent: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn ensure_can_write_config_file(config_file: &Path, force_overwrite: bool) -> Result<(), Error> {

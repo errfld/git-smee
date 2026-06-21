@@ -82,6 +82,60 @@ fn given_stale_embedded_binary_when_running_installed_hook_then_path_fallback_is
     assert!(stderr.contains(&missing_git_smee.to_string_lossy().to_string()));
 }
 
+#[cfg(unix)]
+#[test]
+fn given_managed_hook_when_reinstalling_then_hook_file_is_atomically_replaced() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+
+    let initial_options = HookScriptOptions::new(
+        PathBuf::from("/tmp/git-smee-initial"),
+        repo.join(DEFAULT_CONFIG_FILE_NAME),
+    );
+    installer::install_hooks_with_options(&config, &installer, &initial_options).unwrap();
+    let pre_commit = resolve_hooks_path_with_git(&repo).join("pre-commit");
+    let initial_inode = fs::metadata(&pre_commit).unwrap().ino();
+
+    let replacement_options = HookScriptOptions::new(
+        PathBuf::from("/tmp/git-smee-replacement"),
+        repo.join(DEFAULT_CONFIG_FILE_NAME),
+    );
+    installer::install_hooks_with_options(&config, &installer, &replacement_options).unwrap();
+
+    let replacement_metadata = fs::metadata(&pre_commit).unwrap();
+    assert_ne!(replacement_metadata.ino(), initial_inode);
+    assert!(
+        fs::read_to_string(pre_commit)
+            .unwrap()
+            .contains("/tmp/git-smee-replacement")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn given_managed_config_when_force_writing_then_config_file_is_atomically_replaced() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let config_path = temp_dir.path().join(DEFAULT_CONFIG_FILE_NAME);
+    let initial_config = installer::with_managed_header("[hooks]\n");
+    installer::write_config_file(&config_path, &initial_config, true).unwrap();
+    let initial_inode = fs::metadata(&config_path).unwrap().ino();
+
+    let replacement_config = installer::with_managed_header("[hooks.pre-commit]\n");
+    installer::write_config_file(&config_path, &replacement_config, true).unwrap();
+
+    let replacement_metadata = fs::metadata(&config_path).unwrap();
+    assert_ne!(replacement_metadata.ino(), initial_inode);
+    assert_eq!(fs::read_to_string(config_path).unwrap(), replacement_config);
+}
+
 #[test]
 fn given_custom_hooks_path_when_installing_hooks_then_hooks_are_written_to_custom_path() {
     let temp_dir = tempfile::tempdir().unwrap();
