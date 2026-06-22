@@ -82,6 +82,59 @@ fn given_stale_embedded_binary_when_running_installed_hook_then_path_fallback_is
     assert!(stderr.contains(&missing_git_smee.to_string_lossy().to_string()));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn given_non_utf8_unix_paths_when_running_installed_hook_then_original_bytes_are_forwarded() {
+    use std::{
+        ffi::OsString,
+        os::{unix::ffi::OsStrExt, unix::ffi::OsStringExt, unix::fs::PermissionsExt},
+    };
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let repo = temp_dir.path().join("repo");
+    init_repo(&repo);
+    write_config_fixture(&repo);
+
+    let non_utf8_dir = temp_dir
+        .path()
+        .join(OsString::from_vec(b"non-utf8-\xFF".to_vec()));
+    fs::create_dir(&non_utf8_dir).unwrap();
+    let observed_config_arg = temp_dir.path().join("observed-config-arg");
+    let fake_git_smee = non_utf8_dir.join("git-smee");
+    fs::write(
+        &fake_git_smee,
+        format!(
+            "#!/usr/bin/env sh\nprintf '%s' \"$2\" > '{}'\n",
+            observed_config_arg.display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&fake_git_smee).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake_git_smee, permissions).unwrap();
+
+    let config_path = non_utf8_dir.join(DEFAULT_CONFIG_FILE_NAME);
+    let config = read_config_from_repo(&repo);
+    let installer = FileSystemHookInstaller::from_path(repo.clone()).unwrap();
+    let options = HookScriptOptions::new(fake_git_smee, config_path.clone());
+    installer::install_hooks_with_options(&config, &installer, &options).unwrap();
+
+    let output = Command::new(resolve_hooks_path_with_git(&repo).join("pre-commit"))
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "hook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(observed_config_arg).unwrap(),
+        config_path.as_os_str().as_bytes()
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn given_managed_hook_when_reinstalling_then_hook_file_is_atomically_replaced() {

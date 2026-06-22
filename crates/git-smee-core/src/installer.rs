@@ -617,6 +617,29 @@ pub fn install_hooks_with_options<T: HookInstaller>(
 }
 
 fn shell_single_quote(path: &Path) -> String {
+    unix_shell_path_word(path)
+}
+
+#[cfg(unix)]
+fn unix_shell_path_word(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+
+    match path.as_os_str().to_str() {
+        Some(path) => format!("'{}'", path.replace('\'', "'\"'\"'")),
+        None => {
+            let escaped = path
+                .as_os_str()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!(r"\{byte:03o}"))
+                .collect::<String>();
+            format!(r#"$(printf '%b' '{escaped}')"#)
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn unix_shell_path_word(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
 }
 
@@ -890,6 +913,24 @@ mod tests {
             shell_single_quote(path),
             "'/tmp/it'\"'\"'s 100% ready/git-smee'"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_single_quote_preserves_non_utf8_unix_bytes_with_printf_escape() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(
+            b"/tmp/git-smee-\xFF/config.toml".to_vec(),
+        ));
+
+        let escaped = shell_single_quote(&path);
+
+        assert_eq!(
+            escaped,
+            r"$(printf '%b' '\057\164\155\160\057\147\151\164\055\163\155\145\145\055\377\057\143\157\156\146\151\147\056\164\157\155\154')"
+        );
+        assert!(!escaped.contains('\u{FFFD}'));
     }
 
     #[test]
