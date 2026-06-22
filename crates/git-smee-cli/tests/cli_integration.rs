@@ -617,6 +617,29 @@ fn given_node_pnpm_template_when_init_then_config_parses_and_installs() {
 }
 
 #[test]
+fn given_generic_template_when_init_then_config_parses_and_installs() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .args(["init", "--template", "generic"])
+        .assert()
+        .success();
+
+    let initialized = fs::read_to_string(test_repo.config_path()).unwrap();
+    assert!(initialized.contains("replace me with your pre-commit check"));
+    assert!(initialized.contains("./scripts/test"));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+    test_repo.assert_hooks_installed(vec![LifeCyclePhase::PreCommit]);
+}
+
+#[test]
 fn given_unknown_template_when_init_then_error_lists_valid_templates() {
     let test_repo = common::TestRepo::default();
     fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
