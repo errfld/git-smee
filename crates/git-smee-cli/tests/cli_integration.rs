@@ -567,6 +567,75 @@ fn given_existing_config_when_init_with_force_then_it_overwrites_config() {
 }
 
 #[test]
+fn given_rust_template_when_init_then_config_parses_and_installs() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .args(["init", "--template", "rust"])
+        .assert()
+        .success();
+
+    let initialized = fs::read_to_string(test_repo.config_path()).unwrap();
+    assert!(initialized.contains(MANAGED_FILE_MARKER));
+    assert!(initialized.contains("cargo fmt --all -- --check"));
+    assert!(
+        initialized
+            .contains("cargo clippy --workspace --all-targets --all-features -- -D warnings")
+    );
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+    test_repo.assert_hooks_installed(vec![LifeCyclePhase::PreCommit, LifeCyclePhase::PrePush]);
+}
+
+#[test]
+fn given_node_pnpm_template_when_init_then_config_parses_and_installs() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .args(["init", "--template", "node-pnpm"])
+        .assert()
+        .success();
+
+    let initialized = fs::read_to_string(test_repo.config_path()).unwrap();
+    assert!(initialized.contains("pnpm lint"));
+    assert!(initialized.contains("pnpm test"));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+    test_repo.assert_hooks_installed(vec![LifeCyclePhase::PreCommit, LifeCyclePhase::PrePush]);
+}
+
+#[test]
+fn given_unknown_template_when_init_then_error_lists_valid_templates() {
+    let test_repo = common::TestRepo::default();
+    fs::remove_file(test_repo.config_path()).expect("failed to remove default config");
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .args(["init", "--template", "python"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("invalid value 'python'")
+                .and(predicate::str::contains("minimal"))
+                .and(predicate::str::contains("rust"))
+                .and(predicate::str::contains("node-pnpm"))
+                .and(predicate::str::contains("generic")),
+        );
+}
+
+#[test]
 fn given_unmanaged_hook_when_install_without_force_then_it_fails_and_preserves_hook() {
     let test_repo = common::TestRepo::default();
     let pre_commit = test_repo.path.join(".git").join("hooks").join("pre-commit");

@@ -53,6 +53,23 @@ cargo install --path crates/git-smee-cli
    This creates a `.git-smee.toml` file with a default pre-commit hook.
    If the file already exists, `init` refuses to overwrite it unless you pass `--force`.
 
+   You can start from an explicit built-in template and then edit the generated TOML:
+
+   ```bash
+   git smee init --template rust
+   git smee init --template node-pnpm
+   git smee init --template generic
+   ```
+
+   Available templates are:
+
+   - `minimal` (default): a single starter pre-commit command.
+   - `rust`: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace --all-targets --all-features`.
+   - `node-pnpm`: `pnpm lint` and `pnpm test` hooks.
+   - `generic`: an editable shell-command starter with commented examples.
+
+   Unknown template names are rejected with an error that lists valid template names.
+
 2. Edit `.git-smee.toml` to define your hooks:
 
    ```toml

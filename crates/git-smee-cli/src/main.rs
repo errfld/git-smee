@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use git_smee_core::{
     DEFAULT_CONFIG_FILE_NAME, SmeeConfig,
     config::{self, LifeCyclePhase},
@@ -55,6 +55,13 @@ enum Command {
     Initialize {
         #[arg(long, help = "Overwrite an existing .git-smee.toml file")]
         force: bool,
+        #[arg(
+            long,
+            default_value_t = InitTemplate::Minimal,
+            value_enum,
+            help = "Starter template to write"
+        )]
+        template: InitTemplate,
     },
     #[command(name = "doctor", about = "Diagnose git-smee repository setup")]
     Doctor {
@@ -67,6 +74,66 @@ enum Command {
         json: bool,
     },
 }
+
+#[derive(Clone, Debug, ValueEnum)]
+enum InitTemplate {
+    Minimal,
+    Rust,
+    NodePnpm,
+    Generic,
+}
+
+impl std::fmt::Display for InitTemplate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Minimal => "minimal",
+            Self::Rust => "rust",
+            Self::NodePnpm => "node-pnpm",
+            Self::Generic => "generic",
+        };
+        formatter.write_str(name)
+    }
+}
+
+impl InitTemplate {
+    fn config_content(&self) -> Result<String, config::Error> {
+        match self {
+            Self::Minimal => (&config::SmeeConfig::default()).try_into(),
+            Self::Rust => Ok(RUST_INIT_TEMPLATE.to_string()),
+            Self::NodePnpm => Ok(NODE_PNPM_INIT_TEMPLATE.to_string()),
+            Self::Generic => Ok(GENERIC_INIT_TEMPLATE.to_string()),
+        }
+    }
+}
+
+const RUST_INIT_TEMPLATE: &str = r#"# Rust starter: edit commands to match your workspace policy.
+[[pre-commit]]
+command = "cargo fmt --all -- --check"
+
+[[pre-commit]]
+command = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+[[pre-push]]
+command = "cargo test --workspace --all-targets --all-features"
+"#;
+
+const NODE_PNPM_INIT_TEMPLATE: &str = r#"# Node/pnpm starter: commands are explicit and editable.
+[[pre-commit]]
+command = "pnpm lint"
+
+[[pre-push]]
+command = "pnpm test"
+"#;
+
+const GENERIC_INIT_TEMPLATE: &str = r#"# Generic starter: replace these commands with your project's checks.
+# Add another [[pre-commit]] or [[pre-push]] table for each command to run.
+[[pre-commit]]
+command = "echo 'replace me with your pre-commit check'"
+
+# Example:
+# [[pre-push]]
+# command = "./scripts/test"
+"#;
 
 fn main() {
     if let Err(error) = run() {
@@ -113,20 +180,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(())
         }
-        Command::Initialize { force } => {
+        Command::Initialize { force, template } => {
             repository::ensure_in_repo_root()?;
             let installer = installer::FileSystemHookInstaller::from_default_with_force(force)?;
             println!(
                 "Initializing {} configuration file...",
                 config_path.display()
             );
-            let default_config: String = (&config::SmeeConfig::default()).try_into()?;
-            let default_config = installer::with_managed_header(&default_config);
+            let template_config = template.config_content()?;
+            let template_config = installer::with_managed_header(&template_config);
 
             if is_default_config_path(&config_path, &env::current_dir()?) {
-                installer.install_config_file(&default_config)?;
+                installer.install_config_file(&template_config)?;
             } else {
-                installer::write_config_file(&config_path, &default_config, force)?;
+                installer::write_config_file(&config_path, &template_config, force)?;
             }
             Ok(())
         }
