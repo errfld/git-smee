@@ -82,7 +82,7 @@ fn given_stale_embedded_binary_when_running_installed_hook_then_path_fallback_is
     assert!(stderr.contains(&missing_git_smee.to_string_lossy().to_string()));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn given_non_utf8_unix_paths_when_running_installed_hook_then_original_bytes_are_forwarded() {
     use std::{
