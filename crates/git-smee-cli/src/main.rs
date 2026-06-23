@@ -268,12 +268,12 @@ impl MigrationReport {
             lines.push(format!("[[{}]]", phase.as_str()));
             lines.push(format!(
                 "command = \"{}\"",
-                toml_escape_basic_string(&format!(".git/hooks/{}", phase.as_str()))
+                toml_escape_basic_string(&format!(".git-smee/legacy/{}", phase.as_str()))
             ));
-            lines.push(
-                "# TODO: preserve or refactor the legacy hook script before deleting it."
-                    .to_string(),
-            );
+            lines.push(format!(
+                "# TODO: move .git/hooks/{0} to .git-smee/legacy/{0} before running git smee install.",
+                phase.as_str()
+            ));
             lines.push(String::new());
         }
 

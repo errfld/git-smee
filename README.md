@@ -282,9 +282,10 @@ Use `git smee status --json` when tooling needs stable fields such as `status`,
 
 Run `git smee migrate-hooks` before replacing an existing `.git/hooks/*` setup.
 It is read-only: unmanaged Git hook files are reported as parseable TOML snippets
-that call the preserved legacy hook path (for example `.git/hooks/pre-commit`),
-while git-smee-managed wrappers are ignored and listed in a comment. Review the
-suggestions before copying them into `.git-smee.toml`.
+that call a preserved legacy copy outside the managed hooks directory (for
+example `.git-smee/legacy/pre-commit`), while git-smee-managed wrappers are
+ignored and listed in a comment. Move each legacy script as instructed before
+copying the suggestions into `.git-smee.toml` and running `git smee install`.
 
 Run `git smee doctor` when onboarding a repository, after changing `core.hooksPath`, or when a
 hook does not fire as expected. The human-readable report groups `ok`, `warnings`, and `errors`

@@ -71,6 +71,7 @@ fn given_unmanaged_hooks_when_migrate_hooks_then_prints_parseable_toml_suggestio
         .success()
         .stdout(predicate::str::contains("[[pre-commit]]"))
         .stdout(predicate::str::contains("[[commit-msg]]"))
+        .stdout(predicate::str::contains(".git-smee/legacy/pre-commit"))
         .stdout(predicate::str::contains("pre-commit.sample").not())
         .get_output()
         .stdout
