@@ -254,6 +254,7 @@ git smee install [--force] [--config <path>]    # Install hooks from the selecte
 git smee [--config <path>] run <hook> [hook-args...]           # Run a specific git hook
 git smee [--config <path>] status [--json]      # Show hook coverage and drift
 git smee [--config <path>] doctor [--json]      # Diagnose repository setup and hook drift
+git smee migrate-hooks                          # Suggest config entries for existing hooks
 ```
 
 Run `git smee status` as a read-only onboarding or CI smoke check after editing
@@ -278,6 +279,12 @@ next actions:
 Use `git smee status --json` when tooling needs stable fields such as `status`,
 `hooks[].configured_command_count`, `hooks[].state`, `obsolete_managed_hooks`, and
 `next_actions`.
+
+Run `git smee migrate-hooks` before replacing an existing `.git/hooks/*` setup.
+It is read-only: unmanaged Git hook files are reported as parseable TOML snippets
+that call the preserved legacy hook path (for example `.git/hooks/pre-commit`),
+while git-smee-managed wrappers are ignored and listed in a comment. Review the
+suggestions before copying them into `.git-smee.toml`.
 
 Run `git smee doctor` when onboarding a repository, after changing `core.hooksPath`, or when a
 hook does not fire as expected. The human-readable report groups `ok`, `warnings`, and `errors`
