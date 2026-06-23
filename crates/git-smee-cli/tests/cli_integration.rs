@@ -31,6 +31,88 @@ fn given_git_smee_when_help_then_success() {
 }
 
 #[test]
+fn given_no_unmanaged_hooks_when_migrate_hooks_then_reports_no_suggestions() {
+    let test_repo = common::TestRepo::default();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("migrate-hooks")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("# No unmanaged Git hooks found")
+                .and(predicate::str::contains("[[").not()),
+        );
+}
+
+#[test]
+fn given_unmanaged_hooks_when_migrate_hooks_then_prints_parseable_toml_suggestions() {
+    let test_repo = common::TestRepo::default();
+    fs::write(
+        test_repo.path.join(".git/hooks/pre-commit"),
+        "#!/usr/bin/env sh\necho legacy pre-commit\n",
+    )
+    .unwrap();
+    fs::write(
+        test_repo.path.join(".git/hooks/commit-msg"),
+        "#!/usr/bin/env sh\necho legacy commit-msg\n",
+    )
+    .unwrap();
+    fs::write(
+        test_repo.path.join(".git/hooks/pre-commit.sample"),
+        "sample",
+    )
+    .unwrap();
+
+    let output = Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("migrate-hooks")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[[pre-commit]]"))
+        .stdout(predicate::str::contains("[[commit-msg]]"))
+        .stdout(predicate::str::contains(".git-smee/legacy/pre-commit"))
+        .stdout(predicate::str::contains("pre-commit.sample").not())
+        .get_output()
+        .stdout
+        .clone();
+
+    let suggested_config = test_repo.path.join("suggested.git-smee.toml");
+    fs::write(&suggested_config, output).unwrap();
+    let parsed = git_smee_core::SmeeConfig::from_toml(&suggested_config).unwrap();
+    assert!(parsed.hooks.contains_key(&LifeCyclePhase::PreCommit));
+    assert!(parsed.hooks.contains_key(&LifeCyclePhase::CommitMsg));
+}
+
+#[test]
+fn given_managed_and_unmanaged_hooks_when_migrate_hooks_then_ignores_managed_wrappers() {
+    let test_repo = common::TestRepo::default();
+    fs::write(
+        test_repo.path.join(".git/hooks/pre-push"),
+        format!("#!/usr/bin/env sh\n# {MANAGED_FILE_MARKER}\ngit-smee run pre-push\n"),
+    )
+    .unwrap();
+    fs::write(
+        test_repo.path.join(".git/hooks/post-merge"),
+        "#!/usr/bin/env sh\necho legacy post-merge\n",
+    )
+    .unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("migrate-hooks")
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("[[post-merge]]")
+                .and(predicate::str::contains("[[pre-push]]").not())
+                .and(predicate::str::contains(
+                    "# Ignored managed git-smee hooks: pre-push",
+                )),
+        );
+}
+
+#[test]
 fn given_non_repo_dir_when_help_then_success() {
     let non_repo_dir = TempDir::new().unwrap();
 
