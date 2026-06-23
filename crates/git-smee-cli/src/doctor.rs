@@ -1,6 +1,6 @@
 use std::{env, fs, path::Path};
 
-use git_smee_core::{installer, installer::MANAGED_FILE_MARKER, repository};
+use git_smee_core::{installer, repository};
 use serde::Serialize;
 
 use crate::{normalize_config_path_for_hook_script, read_config_file};
@@ -144,6 +144,23 @@ fn build_doctor_report(config_path: &Path) -> DoctorReport {
             ));
             continue;
         }
+        let is_managed = match installer::has_managed_header(&hook_path) {
+            Ok(is_managed) => is_managed,
+            Err(error) => {
+                report.errors.push(format!(
+                    "cannot read hook wrapper for {phase} at {}: {error}",
+                    hook_path.display()
+                ));
+                continue;
+            }
+        };
+        if !is_managed {
+            report.errors.push(format!(
+                "unmanaged hook file blocks install for {phase} at {}; move it aside or run git smee install --force",
+                hook_path.display()
+            ));
+            continue;
+        }
         let content = match fs::read_to_string(&hook_path) {
             Ok(content) => content,
             Err(error) => {
@@ -154,13 +171,6 @@ fn build_doctor_report(config_path: &Path) -> DoctorReport {
                 continue;
             }
         };
-        if !content.contains(MANAGED_FILE_MARKER) {
-            report.errors.push(format!(
-                "unmanaged hook file blocks install for {phase} at {}; move it aside or run git smee install --force",
-                hook_path.display()
-            ));
-            continue;
-        }
         report
             .ok
             .push(format!("managed wrapper is installed for {phase}"));
