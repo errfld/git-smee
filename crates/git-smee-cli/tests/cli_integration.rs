@@ -339,6 +339,27 @@ fn given_unmanaged_hook_when_doctor_then_collision_is_reported() {
 }
 
 #[test]
+fn given_marker_only_in_body_when_doctor_then_hook_is_unmanaged() {
+    let test_repo = common::TestRepo::default();
+    let pre_commit = test_repo.path.join(".git/hooks/pre-commit");
+    fs::write(
+        &pre_commit,
+        format!("#!/usr/bin/env sh\necho '{MANAGED_FILE_MARKER}'\n"),
+    )
+    .unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("unmanaged hook file blocks install for pre-commit")
+                .and(predicate::str::contains("managed wrapper is installed for pre-commit").not()),
+        );
+}
+
+#[test]
 fn given_custom_hooks_path_when_doctor_then_effective_path_is_reported() {
     let test_repo = common::TestRepo::default();
     std::process::Command::new("git")
