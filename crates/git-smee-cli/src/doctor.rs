@@ -3,7 +3,7 @@ use std::{env, fs, path::Path};
 use git_smee_core::{installer, repository};
 use serde::Serialize;
 
-use crate::{normalize_config_path_for_hook_script, read_config_file};
+use crate::config_path::{normalize_config_path_for_hook_script, read_config_file};
 
 #[derive(Debug, Serialize)]
 struct DoctorReport {
