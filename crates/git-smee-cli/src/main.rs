@@ -14,6 +14,7 @@ use git_smee_core::{
 };
 
 mod config_path;
+mod diagnostics;
 mod doctor;
 mod status;
 
