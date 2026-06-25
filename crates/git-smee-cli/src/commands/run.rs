@@ -53,7 +53,7 @@ fn read_hook_stdin() -> io::Result<Option<Vec<u8>>> {
     let mut payload = Vec::new();
     stdin
         .lock()
-        .take(max_hook_stdin_bytes + 1)
+        .take(stdin_sentinel_read_limit(max_hook_stdin_bytes))
         .read_to_end(&mut payload)?;
     if payload.len() as u64 > max_hook_stdin_bytes {
         return Err(io::Error::new(
@@ -88,6 +88,10 @@ fn hook_stdin_limit_display(limit: u64) -> String {
     }
 }
 
+fn stdin_sentinel_read_limit(max_hook_stdin_bytes: u64) -> u64 {
+    max_hook_stdin_bytes.saturating_add(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +107,11 @@ mod tests {
     #[test]
     fn custom_limit_uses_byte_display() {
         assert_eq!(hook_stdin_limit_display(42), "42 bytes");
+    }
+
+    #[test]
+    fn sentinel_read_limit_saturates_at_u64_max() {
+        assert_eq!(stdin_sentinel_read_limit(41), 42);
+        assert_eq!(stdin_sentinel_read_limit(u64::MAX), u64::MAX);
     }
 }
