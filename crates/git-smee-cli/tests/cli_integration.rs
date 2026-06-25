@@ -1333,6 +1333,24 @@ command = "test \"$1\" = \"COMMIT_EDITMSG\""
         .success();
 }
 
+#[cfg(windows)]
+#[test]
+fn given_hook_args_when_running_on_windows_then_command_receives_positional_args() {
+    let test_repo = common::TestRepo::default();
+    test_repo.write_config(
+        r#"
+[[commit-msg]]
+command = "if \"%1\"==\"COMMIT_EDITMSG\" (if \"%2\"==\"metadata\" (exit /b 0) else (exit /b 1)) else (exit /b 1)"
+"#,
+    );
+
+    let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
+    cmd.current_dir(&test_repo.path)
+        .args(["run", "commit-msg", "COMMIT_EDITMSG", "metadata"])
+        .assert()
+        .success();
+}
+
 #[test]
 fn given_relative_config_env_from_subdir_when_running_then_cli_resolves_from_invocation_dir() {
     let test_repo = common::TestRepo::default();
