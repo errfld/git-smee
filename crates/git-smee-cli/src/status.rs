@@ -1,9 +1,14 @@
-use std::{env, fs, path::Path};
+use std::path::Path;
 
-use git_smee_core::{config::LifeCyclePhase, installer, repository};
+use git_smee_core::repository;
 use serde::Serialize;
 
-use crate::config_path::{normalize_config_path_for_hook_script, read_config_file};
+use crate::{
+    config_path::read_config_file,
+    diagnostics::{
+        ExpectedHookScript, HookInspectionState, inspect_hook, inspect_obsolete_managed_hooks,
+    },
+};
 
 #[derive(Debug, Serialize)]
 struct StatusReport {
@@ -64,15 +69,13 @@ pub(crate) fn run_status(config_path: &Path, json: bool) -> Result<(), Box<dyn s
 
 fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::error::Error>> {
     let repository_root = repository::find_git_root()?;
-    let hooks_dir = repository::resolve_git_path(
+    let hooks_dir = git_smee_core::repository::resolve_git_path(
         &repository_root,
-        installer::FileSystemHookInstaller::HOOKS_GIT_PATH_KEY,
+        git_smee_core::installer::FileSystemHookInstaller::HOOKS_GIT_PATH_KEY,
     )?;
     let config = read_config_file(config_path)?;
-    let expected_config_path = normalize_config_path_for_hook_script(config_path, &repository_root)
-        .unwrap_or_else(|_| config_path.to_path_buf());
-    let expected_exe = env::current_exe().ok();
-    let expected_config = expected_config_path.to_string_lossy().to_string();
+    let expected_hook_script =
+        ExpectedHookScript::from_current_process(config_path, &repository_root);
 
     let mut phases: Vec<_> = config.hooks.keys().copied().collect();
     phases.sort_by_key(|phase| phase.as_str());
@@ -80,67 +83,46 @@ fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::
     let mut hooks = Vec::new();
     let mut next_actions = Vec::new();
     for phase in &phases {
-        let hook_path = hooks_dir.join(phase.as_str());
+        let inspection = inspect_hook(&repository_root, &hooks_dir, *phase);
         let configured_command_count = config.hooks.get(phase).map_or(0, Vec::len);
         let mut stale_reasons = Vec::new();
-        let (state, next_action) = if !hook_path.exists() {
-            (
+        let (state, next_action) = match inspection.state() {
+            HookInspectionState::Missing => (
                 HookState::Missing,
                 Some(format!("run git smee install to create {phase}")),
-            )
-        } else if !hook_path.is_file() {
-            (
+            ),
+            HookInspectionState::InvalidPath => (
                 HookState::InvalidPath,
                 Some(format!(
                     "remove {} or fix core.hooksPath before reinstalling",
-                    display_repo_path(&repository_root, &hook_path)
+                    inspection.display_path()
                 )),
-            )
-        } else {
-            match installer::has_managed_header(&hook_path) {
-                Ok(false) => (
-                    HookState::Unmanaged,
-                    Some(format!(
-                        "move {} aside or run git smee install --force",
-                        display_repo_path(&repository_root, &hook_path)
-                    )),
-                ),
-                Ok(true) => match fs::read_to_string(&hook_path) {
-                    Ok(content) => {
-                        if !content.contains(&expected_config) {
-                            stale_reasons.push(format!("expected config path {expected_config}"));
-                        }
-                        if let Some(expected_exe) = &expected_exe {
-                            let expected_exe = expected_exe.to_string_lossy().to_string();
-                            if !content.contains(&expected_exe) {
-                                stale_reasons.push(format!("expected executable {expected_exe}"));
-                            }
-                        }
-                        if stale_reasons.is_empty() {
-                            (HookState::Installed, None)
-                        } else {
-                            (
-                                HookState::Stale,
-                                Some(format!("run git smee install to refresh {phase}")),
-                            )
-                        }
-                    }
-                    Err(error) => (
-                        HookState::Unreadable,
-                        Some(format!(
-                            "fix permissions for {} ({error})",
-                            display_repo_path(&repository_root, &hook_path)
-                        )),
-                    ),
-                },
-                Err(error) => (
-                    HookState::Unreadable,
-                    Some(format!(
-                        "fix permissions for {} ({error})",
-                        display_repo_path(&repository_root, &hook_path)
-                    )),
-                ),
+            ),
+            HookInspectionState::Unmanaged => (
+                HookState::Unmanaged,
+                Some(format!(
+                    "move {} aside or run git smee install --force",
+                    inspection.display_path()
+                )),
+            ),
+            HookInspectionState::Managed { content } => {
+                stale_reasons = expected_hook_script.stale_reasons(content);
+                if stale_reasons.is_empty() {
+                    (HookState::Installed, None)
+                } else {
+                    (
+                        HookState::Stale,
+                        Some(format!("run git smee install to refresh {phase}")),
+                    )
+                }
             }
+            HookInspectionState::Unreadable { error } => (
+                HookState::Unreadable,
+                Some(format!(
+                    "fix permissions for {} ({error})",
+                    inspection.display_path()
+                )),
+            ),
         };
 
         if let Some(action) = &next_action {
@@ -150,35 +132,22 @@ fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::
             phase: phase.to_string(),
             configured_command_count,
             state,
-            path: display_repo_path(&repository_root, &hook_path),
+            path: inspection.display_path().to_string(),
             stale_reasons,
             next_action,
         });
     }
 
-    let configured_phase_names: Vec<_> = phases.iter().map(|phase| phase.as_str()).collect();
     let mut obsolete_managed_hooks = Vec::new();
-    for phase in LifeCyclePhase::all() {
-        if configured_phase_names.contains(&phase.as_str()) {
-            continue;
-        }
-        let hook_path = hooks_dir.join(phase.as_str());
-        if !hook_path.is_file() {
-            continue;
-        }
-        let Ok(is_managed) = installer::has_managed_header(&hook_path) else {
-            continue;
-        };
-        if is_managed {
-            let path = display_repo_path(&repository_root, &hook_path);
-            let next_action = format!("remove obsolete managed hook {path}");
-            next_actions.push(next_action.clone());
-            obsolete_managed_hooks.push(ObsoleteHookStatus {
-                phase: phase.to_string(),
-                path,
-                next_action,
-            });
-        }
+    for inspection in inspect_obsolete_managed_hooks(&repository_root, &hooks_dir, &phases) {
+        let path = inspection.display_path().to_string();
+        let next_action = format!("remove obsolete managed hook {path}");
+        next_actions.push(next_action.clone());
+        obsolete_managed_hooks.push(ObsoleteHookStatus {
+            phase: inspection.phase().to_string(),
+            path,
+            next_action,
+        });
     }
 
     next_actions.sort();
@@ -271,34 +240,5 @@ fn print_status_section(name: &str, items: &[String]) {
         for item in items {
             println!("  - {item}");
         }
-    }
-}
-
-fn display_repo_path(repository_root: &Path, path: &Path) -> String {
-    path.strip_prefix(repository_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
-        .replace('\\', "/")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn display_repo_path_uses_forward_slashes_for_repo_relative_paths() {
-        assert_eq!(
-            display_repo_path(Path::new("/repo"), Path::new("/repo/.git/hooks/pre-commit")),
-            ".git/hooks/pre-commit"
-        );
-    }
-
-    #[test]
-    fn display_repo_path_keeps_external_paths_visible() {
-        assert_eq!(
-            display_repo_path(Path::new("/repo"), Path::new("/tmp/hooks/pre-commit")),
-            "/tmp/hooks/pre-commit"
-        );
     }
 }

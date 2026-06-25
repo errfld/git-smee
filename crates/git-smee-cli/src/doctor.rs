@@ -1,9 +1,12 @@
-use std::{env, fs, path::Path};
+use std::path::Path;
 
 use git_smee_core::{installer, repository};
 use serde::Serialize;
 
-use crate::config_path::{normalize_config_path_for_hook_script, read_config_file};
+use crate::{
+    config_path::read_config_file,
+    diagnostics::{ExpectedHookScript, HookInspectionState, inspect_hook},
+};
 
 #[derive(Debug, Serialize)]
 struct DoctorReport {
@@ -121,71 +124,39 @@ fn build_doctor_report(config_path: &Path) -> DoctorReport {
         }
     };
 
-    let expected_config_path = normalize_config_path_for_hook_script(config_path, &repository_root)
-        .unwrap_or_else(|_| config_path.to_path_buf());
-    let expected_exe = env::current_exe().ok();
-    let expected_config = expected_config_path.to_string_lossy().to_string();
+    let expected_hook_script =
+        ExpectedHookScript::from_current_process(config_path, &repository_root);
 
     let mut phases: Vec<_> = config.hooks.keys().copied().collect();
     phases.sort_by_key(|phase| phase.as_str());
     for phase in phases {
-        let hook_path = hooks_dir.join(phase.as_str());
-        if !hook_path.exists() {
-            report.errors.push(format!(
+        let inspection = inspect_hook(&repository_root, &hooks_dir, phase);
+        match inspection.state() {
+            HookInspectionState::Missing => report.errors.push(format!(
                 "missing managed wrapper for {phase} at {}; run git smee install",
-                hook_path.display()
-            ));
-            continue;
-        }
-        if !hook_path.is_file() {
-            report.errors.push(format!(
+                inspection.path().display()
+            )),
+            HookInspectionState::InvalidPath => report.errors.push(format!(
                 "hook path for {phase} is not a regular file: {}; remove it or fix core.hooksPath",
-                hook_path.display()
-            ));
-            continue;
-        }
-        let is_managed = match installer::has_managed_header(&hook_path) {
-            Ok(is_managed) => is_managed,
-            Err(error) => {
-                report.errors.push(format!(
-                    "cannot read hook wrapper for {phase} at {}: {error}",
-                    hook_path.display()
-                ));
-                continue;
-            }
-        };
-        if !is_managed {
-            report.errors.push(format!(
+                inspection.path().display()
+            )),
+            HookInspectionState::Unmanaged => report.errors.push(format!(
                 "unmanaged hook file blocks install for {phase} at {}; move it aside or run git smee install --force",
-                hook_path.display()
-            ));
-            continue;
-        }
-        let content = match fs::read_to_string(&hook_path) {
-            Ok(content) => content,
-            Err(error) => {
-                report.errors.push(format!(
-                    "cannot read hook wrapper for {phase} at {}: {error}",
-                    hook_path.display()
-                ));
-                continue;
-            }
-        };
-        report
-            .ok
-            .push(format!("managed wrapper is installed for {phase}"));
-        if !content.contains(&expected_config) {
-            report.warnings.push(format!(
-                "stale managed wrapper for {phase}: expected config path {}; run git smee install",
-                expected_config
-            ));
-        }
-        if let Some(expected_exe) = &expected_exe {
-            let expected_exe = expected_exe.to_string_lossy().to_string();
-            if !content.contains(&expected_exe) {
-                report.warnings.push(format!(
-                    "stale managed wrapper for {phase}: expected executable {expected_exe}; run git smee install"
-                ));
+                inspection.path().display()
+            )),
+            HookInspectionState::Unreadable { error } => report.errors.push(format!(
+                "cannot read hook wrapper for {phase} at {}: {error}",
+                inspection.path().display()
+            )),
+            HookInspectionState::Managed { content } => {
+                report
+                    .ok
+                    .push(format!("managed wrapper is installed for {phase}"));
+                for stale_reason in expected_hook_script.stale_reasons(content) {
+                    report.warnings.push(format!(
+                        "stale managed wrapper for {phase}: {stale_reason}; run git smee install"
+                    ));
+                }
             }
         }
     }
