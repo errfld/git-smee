@@ -353,14 +353,20 @@ impl CommandRunner for PlatformCommandRunner<'_> {
         stdin_payload: Option<&[u8]>,
     ) -> Result<Option<i32>, std::io::Error> {
         let mut shell_command = self.platform.create_command();
-        shell_command.arg(command);
         apply_hook_arg_env(&mut shell_command, hook_args);
+        let mut _windows_command_script = None;
         match self.platform {
             Platform::Unix => {
+                shell_command.arg(command);
                 shell_command.arg("--");
                 shell_command.args(hook_args);
             }
-            Platform::Windows => {}
+            Platform::Windows => {
+                let command_script = create_windows_command_script(command)?;
+                shell_command.arg(&command_script);
+                shell_command.args(hook_args);
+                _windows_command_script = Some(command_script);
+            }
         }
         if stdin_payload.is_some() {
             shell_command.stdin(Stdio::piped());
@@ -400,6 +406,20 @@ impl CommandRunner for PlatformCommandRunner<'_> {
     fn shell_display(&self) -> &'static str {
         self.platform.shell_display()
     }
+}
+
+fn create_windows_command_script(command: &str) -> Result<tempfile::TempPath, io::Error> {
+    let mut script = tempfile::Builder::new()
+        .prefix("git-smee-command-")
+        .suffix(".cmd")
+        .tempfile()?;
+    script.write_all(windows_command_script(command).as_bytes())?;
+    script.flush()?;
+    Ok(script.into_temp_path())
+}
+
+fn windows_command_script(command: &str) -> String {
+    format!("@echo off\r\n{command}\r\n")
 }
 
 fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook_args: &[String]) {
@@ -841,6 +861,13 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(runner.calls(), vec!["check-commit-message"]);
         assert_eq!(runner.hook_args_calls(), vec![hook_args]);
+    }
+
+    #[test]
+    fn given_windows_command_script_when_building_then_command_can_read_batch_parameters() {
+        let script = windows_command_script("if \"%1\"==\"alpha\" exit /b 0");
+
+        assert_eq!(script, "@echo off\r\nif \"%1\"==\"alpha\" exit /b 0\r\n");
     }
 
     #[test]

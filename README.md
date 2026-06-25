@@ -224,12 +224,17 @@ When Git invokes a hook with positional arguments (for example `commit-msg <path
 `post-checkout <old> <new> <flag>`), installed git-smee wrappers forward those arguments to
 `git smee run`.
 
-On Unix, forwarded hook arguments are available as shell positional parameters inside configured
-commands (`$1`, `$2`, ...). Example:
+Forwarded hook arguments are available as shell positional parameters inside configured
+commands: `$1`, `$2`, ... on Unix and `%1`, `%2`, ... on Windows. Examples:
 
 ```toml
 [[commit-msg]]
 command = "test -n \"$1\""
+```
+
+```toml
+[[commit-msg]]
+command = "if \"%1\"==\"COMMIT_EDITMSG\" exit /b 0"
 ```
 
 On all platforms, git-smee also exports forwarded hook args as environment variables:
