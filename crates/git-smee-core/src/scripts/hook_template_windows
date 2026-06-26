@@ -1,6 +1,9 @@
 @echo off
 REM DO NOT MODIFY THIS FILE DIRECTLY
 REM THIS FILE IS MANAGED BY git-smee
+REM Keep literal ! characters in embedded paths stable even when the
+REM parent cmd.exe was launched with delayed expansion enabled (/V:ON).
+setlocal DisableDelayedExpansion
 
 set "GIT_SMEE_BIN={git_smee_executable}"
 set "GIT_SMEE_CONFIG={config_path}"

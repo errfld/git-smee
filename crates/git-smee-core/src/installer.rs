@@ -963,6 +963,23 @@ mod tests {
         assert!(template.contains("embedded git-smee executable is not available"));
     }
 
+    #[test]
+    fn windows_hook_template_disables_delayed_expansion_before_embedding_paths() {
+        let template = Platform::Windows.hook_script_template();
+        let disable_position = template
+            .find("setlocal DisableDelayedExpansion")
+            .expect("windows hook template should disable delayed expansion");
+        let bin_assignment_position = template
+            .find("set \"GIT_SMEE_BIN=")
+            .expect("windows hook template should embed git-smee executable path");
+        let config_assignment_position = template
+            .find("set \"GIT_SMEE_CONFIG=")
+            .expect("windows hook template should embed config path");
+
+        assert!(disable_position < bin_assignment_position);
+        assert!(disable_position < config_assignment_position);
+    }
+
     #[cfg(unix)]
     #[test]
     fn given_special_paths_when_installing_hooks_then_unix_hook_contains_escaped_values() {
