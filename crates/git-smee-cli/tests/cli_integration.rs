@@ -1,5 +1,8 @@
 use std::{fs, path::Path};
 
+#[cfg(unix)]
+use std::process::Command as StdCommand;
+
 #[cfg(target_os = "linux")]
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
@@ -22,6 +25,16 @@ fn stdin_capture_command(output_path: &Path) -> String {
     let path = output_path.to_string_lossy();
     let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
     format!("findstr /R . > {path}")
+}
+
+#[cfg(unix)]
+fn git(test_repo: &common::TestRepo, args: &[&str]) {
+    let status = StdCommand::new("git")
+        .current_dir(&test_repo.path)
+        .args(args)
+        .status()
+        .expect("failed to run git command");
+    assert!(status.success(), "git {args:?} failed with {status}");
 }
 
 #[test]
@@ -533,6 +546,84 @@ fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_argument
 
     #[cfg(windows)]
     assert!(hook_content.contains("run pre-commit %*"));
+}
+
+#[cfg(unix)]
+#[test]
+fn given_installed_commit_msg_when_git_commit_runs_then_git_invokes_hook_with_message_path() {
+    let test_repo = common::TestRepo::default();
+    let observed = test_repo.path.join("git-commit-msg-observed.txt");
+    let command = if cfg!(windows) {
+        "if exist \"%1\" (echo git-commit-msg> git-commit-msg-observed.txt) else (exit /b 1)"
+    } else {
+        "test -f \"$1\" && printf 'git-commit-msg\\n' > git-commit-msg-observed.txt"
+    };
+    test_repo.write_config(&format!("[[commit-msg]]\ncommand = {command:?}\n"));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+    git(&test_repo, &["config", "user.name", "git-smee test"]);
+    git(
+        &test_repo,
+        &["config", "user.email", "git-smee@example.invalid"],
+    );
+    git(
+        &test_repo,
+        &["commit", "--allow-empty", "-m", "exercise commit-msg"],
+    );
+
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(observed).expect("commit-msg side effect")),
+        "git-commit-msg\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn given_installed_pre_push_when_git_push_runs_then_git_streams_ref_updates_to_hook() {
+    let test_repo = common::TestRepo::default();
+    let bare_remote = TempDir::new().expect("failed to create bare remote temp dir");
+    git2::Repository::init_bare(bare_remote.path()).expect("failed to init bare remote");
+    let observed = test_repo.path.join("git-pre-push-stdin.txt");
+    let command = stdin_capture_command(&observed);
+    test_repo.write_config(&format!("[[pre-push]]\ncommand = {command:?}\n"));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+    git(&test_repo, &["checkout", "-b", "main"]);
+    git(&test_repo, &["config", "user.name", "git-smee test"]);
+    git(
+        &test_repo,
+        &["config", "user.email", "git-smee@example.invalid"],
+    );
+    git(&test_repo, &["commit", "--allow-empty", "-m", "initial"]);
+    git(
+        &test_repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            bare_remote.path().to_str().expect("utf-8 bare remote path"),
+        ],
+    );
+    git(&test_repo, &["push", "origin", "main"]);
+
+    let stdin =
+        normalize_test_newlines(&fs::read_to_string(observed).expect("pre-push stdin side effect"));
+    assert!(
+        stdin.contains("refs/heads/main"),
+        "unexpected pre-push stdin: {stdin:?}"
+    );
+    assert!(
+        stdin.contains("0000000000000000000000000000000000000000"),
+        "unexpected pre-push stdin: {stdin:?}"
+    );
 }
 
 #[test]
