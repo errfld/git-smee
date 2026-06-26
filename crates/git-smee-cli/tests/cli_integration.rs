@@ -1,4 +1,7 @@
-use std::{fs, path::Path, process::Command as StdCommand};
+use std::{fs, path::Path};
+
+#[cfg(unix)]
+use std::process::Command as StdCommand;
 
 #[cfg(target_os = "linux")]
 use std::{ffi::OsString, os::unix::ffi::OsStringExt};
@@ -24,6 +27,7 @@ fn stdin_capture_command(output_path: &Path) -> String {
     format!("findstr /R . > {path}")
 }
 
+#[cfg(unix)]
 fn git(test_repo: &common::TestRepo, args: &[&str]) {
     let status = StdCommand::new("git")
         .current_dir(&test_repo.path)
@@ -544,6 +548,7 @@ fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_argument
     assert!(hook_content.contains("run pre-commit %*"));
 }
 
+#[cfg(unix)]
 #[test]
 fn given_installed_commit_msg_when_git_commit_runs_then_git_invokes_hook_with_message_path() {
     let test_repo = common::TestRepo::default();
@@ -576,6 +581,7 @@ fn given_installed_commit_msg_when_git_commit_runs_then_git_invokes_hook_with_me
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn given_installed_pre_push_when_git_push_runs_then_git_streams_ref_updates_to_hook() {
     let test_repo = common::TestRepo::default();
