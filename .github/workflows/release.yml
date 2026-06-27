@@ -72,6 +72,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
@@ -84,6 +86,7 @@ jobs:
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -176,15 +179,51 @@ jobs:
     needs: [prepare-release, build-and-release]
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TAG: ${{ needs.prepare-release.outputs.tag }}
     steps:
-      - name: Update Homebrew Tap (Apple Silicon)
-        uses: mislav/bump-homebrew-formula-action@ccf2332299a883f6af50a1d2d41e5df7904dd769 # v4.1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          homebrew-tap: errfld/homebrew-git-smee
-          formula-name: git-smee
-          tag-name: ${{ needs.prepare-release.outputs.tag }}
-          # This action can only bump a single URL field, so the tap remains
-          # Apple Silicon-specific until the formula moves to a multi-arch flow.
-          download-url: https://github.com/errfld/git-smee/releases/download/${{ needs.prepare-release.outputs.tag }}/git-smee-${{ needs.prepare-release.outputs.tag }}-aarch64-apple-darwin.tar.gz
+          persist-credentials: false
+
+      - name: Download Homebrew release checksums
+        shell: bash
         env:
-          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_PAT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p homebrew-checksums
+          gh release download "$TAG" \
+            --repo errfld/git-smee \
+            --dir homebrew-checksums \
+            --pattern "git-smee-$TAG-aarch64-apple-darwin.tar.gz.sha256" \
+            --pattern "git-smee-$TAG-x86_64-apple-darwin.tar.gz.sha256" \
+            --pattern "git-smee-$TAG-x86_64-unknown-linux-gnu.tar.gz.sha256"
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: errfld/homebrew-git-smee
+          token: ${{ secrets.HOMEBREW_PAT }}
+          path: homebrew-tap
+
+      - name: Render multi-arch Homebrew formula
+        shell: bash
+        run: |
+          python3 .github/scripts/update_homebrew_formula.py \
+            --tag "$TAG" \
+            --checksum-dir homebrew-checksums \
+            --formula homebrew-tap/Formula/git-smee.rb
+
+      - name: Commit Homebrew tap update
+        shell: bash
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/git-smee.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula already up to date for $TAG"
+            exit 0
+          fi
+          git commit -m "Update git-smee to $TAG"
+          git push
