@@ -18,6 +18,7 @@ SUPPORTED_TARGETS = (
     "x86_64-apple-darwin",
     "x86_64-unknown-linux-gnu",
 )
+RELEASE_TAG_PATTERN = re.compile(r"^v[0-9]+(\.[0-9]+)*([-.].*)?$")
 
 
 def asset_name(tag: str, target: str) -> str:
@@ -25,7 +26,7 @@ def asset_name(tag: str, target: str) -> str:
 
 
 def version_from_tag(tag: str) -> str:
-    if not re.fullmatch(r"v[0-9]+(\.[0-9]+)*([-.][0-9A-Za-z.]+)?", tag):
+    if not RELEASE_TAG_PATTERN.fullmatch(tag):
         raise ValueError(f"invalid release tag: {tag!r}")
     return tag.removeprefix("v")
 

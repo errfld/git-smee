@@ -40,6 +40,13 @@ class HomebrewFormulaRenderingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing Homebrew checksum assets"):
                 update_homebrew_formula.load_checksums("v1.2.3", checksum_dir)
 
+    def test_version_from_tag_matches_release_workflow_suffixes(self):
+        accepted_tags = ["v1.2.3-rc-1", "v1.2.3-beta+build5", "v1.2.3-beta_1"]
+
+        for tag in accepted_tags:
+            with self.subTest(tag=tag):
+                self.assertEqual(tag.removeprefix("v"), update_homebrew_formula.version_from_tag(tag))
+
 
 if __name__ == "__main__":
     unittest.main()
