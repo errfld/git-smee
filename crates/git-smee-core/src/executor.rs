@@ -8,6 +8,8 @@ use std::{
 };
 
 #[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
 use std::path::PathBuf;
 
 use rayon::iter::IntoParallelRefIterator;
@@ -364,6 +366,9 @@ impl CommandRunner for PlatformCommandRunner<'_> {
             Platform::Windows => {
                 let command_script = create_windows_command_script(command)?;
                 shell_command.arg(&command_script);
+                #[cfg(windows)]
+                append_windows_hook_args(&mut shell_command, hook_args);
+                #[cfg(not(windows))]
                 shell_command.args(hook_args);
                 _windows_command_script = Some(command_script);
             }
@@ -416,6 +421,30 @@ fn create_windows_command_script(command: &str) -> Result<tempfile::TempPath, io
     script.write_all(windows_command_script(command).as_bytes())?;
     script.flush()?;
     Ok(script.into_temp_path())
+}
+
+#[cfg(windows)]
+fn append_windows_hook_args(shell_command: &mut std::process::Command, hook_args: &[String]) {
+    for arg in hook_args {
+        shell_command.raw_arg(" ");
+        shell_command.raw_arg(windows_cmd_quote_hook_arg(arg));
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_cmd_quote_hook_arg(arg: &str) -> String {
+    let needs_quotes = arg.is_empty()
+        || arg.chars().any(|ch| {
+            matches!(
+                ch,
+                ' ' | '\t' | '&' | '|' | '^' | '<' | '>' | '(' | ')' | '!' | '%'
+            )
+        });
+    if !needs_quotes {
+        return arg.to_string();
+    }
+
+    format!("\"{}\"", arg.replace('"', "\"\""))
 }
 
 fn windows_command_script(command: &str) -> String {
@@ -868,6 +897,17 @@ mod tests {
         let script = windows_command_script("if \"%1\"==\"alpha\" exit /b 0");
 
         assert_eq!(script, "@echo off\r\nif \"%1\"==\"alpha\" exit /b 0\r\n");
+    }
+
+    #[test]
+    fn given_windows_hook_arg_with_cmd_metachar_when_quoting_then_it_is_wrapped() {
+        assert_eq!(windows_cmd_quote_hook_arg("alpha&bravo"), "\"alpha&bravo\"");
+        assert_eq!(windows_cmd_quote_hook_arg("plain-ref"), "plain-ref");
+    }
+
+    #[test]
+    fn given_windows_hook_arg_with_space_when_quoting_then_it_is_wrapped() {
+        assert_eq!(windows_cmd_quote_hook_arg("space value"), "\"space value\"");
     }
 
     #[test]
