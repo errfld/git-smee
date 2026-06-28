@@ -605,10 +605,16 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
         .map(|arg| format!("\"{}\"", arg.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" ");
-    let command_line = format!("call \"{hook_for_cmd}\" {quoted_args}");
+    let driver = test_repo.path.join("invoke-metachar-wrapper.cmd");
+    fs::write(
+        &driver,
+        format!("@echo off\r\ncall \"{hook_for_cmd}\" {quoted_args}\r\nexit /b %ERRORLEVEL%\r\n"),
+    )
+    .expect("failed to write wrapper driver");
     let status = StdCommand::new("cmd")
         .current_dir(&test_repo.path)
-        .args(["/V:ON", "/C", &command_line])
+        .args(["/V:ON", "/C"])
+        .arg(&driver)
         .status()
         .expect("failed to run Windows hook wrapper through cmd.exe");
     assert!(status.success(), "installed hook wrapper failed: {status}");
