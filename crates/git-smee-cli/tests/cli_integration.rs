@@ -38,7 +38,7 @@ fn git(test_repo: &common::TestRepo, args: &[&str]) {
 }
 
 #[cfg(windows)]
-fn git_for_windows_sh(test_repo: &common::TestRepo) -> PathBuf {
+fn git_for_windows_sh(test_repo: &common::TestRepo) -> std::path::PathBuf {
     let output = StdCommand::new("git")
         .current_dir(&test_repo.path)
         .arg("--exec-path")
