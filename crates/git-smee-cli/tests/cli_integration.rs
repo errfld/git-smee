@@ -602,7 +602,7 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
     let hook_for_cmd = hook_bat.to_string_lossy().replace('"', "\"\"");
     let quoted_args = args
         .iter()
-        .map(|arg| format!("\"{}\"", arg.replace('"', "\"\"")))
+        .map(|arg| quote_windows_cmd_arg(arg))
         .collect::<Vec<_>>()
         .join(" ");
     let driver = test_repo.path.join("invoke-metachar-wrapper.cmd");
@@ -623,7 +623,7 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
     expected.extend(args.iter().map(|arg| (*arg).to_string()));
     assert_eq!(
         normalize_test_newlines(&fs::read_to_string(observed).expect("missing observed args")),
-        format!("{}\n", expected.join("\n"))
+        expected.join("\n")
     );
 }
 
@@ -1669,6 +1669,16 @@ fn given_proc_receive_hook_when_running_then_stdin_is_inherited_by_command() {
 #[cfg(windows)]
 fn normalize_test_newlines(value: &str) -> String {
     value.replace("\r\n", "\n")
+}
+
+#[cfg(windows)]
+fn quote_windows_cmd_arg(arg: &str) -> String {
+    let escaped = arg
+        .replace('^', "^^")
+        .replace('!', "^!")
+        .replace('%', "%%")
+        .replace('"', "\"\"");
+    format!("\"{escaped}\"")
 }
 
 #[cfg(not(windows))]
