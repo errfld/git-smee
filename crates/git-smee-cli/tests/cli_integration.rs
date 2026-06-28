@@ -586,6 +586,10 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
         .success();
 
     let hook = test_repo.path.join(".git/hooks/commit-msg");
+    // Copy the generated wrapper to a .bat path so this #112 regression isolates
+    // argument forwarding from #176's no-extension Git-for-Windows spawn gap.
+    let hook_bat = test_repo.path.join("commit-msg-wrapper.bat");
+    fs::copy(&hook, &hook_bat).expect("failed to make batch-executable wrapper copy");
     let args = [
         "alpha&bravo",
         "pipe|value",
@@ -595,13 +599,18 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
         "percent%value",
         "space value",
     ];
+    let hook_for_cmd = hook_bat.to_string_lossy().replace('"', "\"\"");
+    let quoted_args = args
+        .iter()
+        .map(|arg| format!("\"{}\"", arg.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let command_line = format!("call \"{hook_for_cmd}\" {quoted_args}");
     let status = StdCommand::new("cmd")
         .current_dir(&test_repo.path)
-        .args(["/V:ON", "/C"])
-        .arg(&hook)
-        .args(args)
+        .args(["/V:ON", "/C", &command_line])
         .status()
-        .expect("failed to run installed Windows hook wrapper through cmd.exe");
+        .expect("failed to run Windows hook wrapper through cmd.exe");
     assert!(status.success(), "installed hook wrapper failed: {status}");
 
     let mut expected = vec![args.len().to_string()];
