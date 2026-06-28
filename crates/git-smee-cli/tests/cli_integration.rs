@@ -573,10 +573,11 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
         ),
     )
     .expect("failed to write capture script");
-    let capture_script_for_cmd = capture_script.to_string_lossy().replace('"', "\"\"");
-    test_repo.write_config(&format!(
-        "[[commit-msg]]\ncommand = \"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \\\"{capture_script_for_cmd}\\\"\"\n"
-    ));
+    let command = format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {}",
+        capture_script.to_string_lossy()
+    );
+    test_repo.write_config(&format!("[[commit-msg]]\ncommand = {command:?}\n"));
 
     Command::new(cargo::cargo_bin!("git-smee"))
         .current_dir(&test_repo.path)
