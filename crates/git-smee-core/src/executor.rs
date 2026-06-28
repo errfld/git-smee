@@ -444,11 +444,7 @@ fn windows_cmd_quote_hook_arg(arg: &str) -> String {
         return arg.to_string();
     }
 
-    let escaped = arg
-        .replace('^', "^^")
-        .replace('!', "^!")
-        .replace('%', "%%")
-        .replace('"', "\"\"");
+    let escaped = arg.replace('"', "\"\"");
     format!("\"{escaped}\"")
 }
 
@@ -908,7 +904,7 @@ mod tests {
     fn given_windows_hook_arg_with_cmd_metachar_when_quoting_then_it_is_wrapped() {
         assert_eq!(
             windows_cmd_quote_hook_arg("caret^bang!percent%"),
-            "\"caret^^bang^!percent%%\""
+            "\"caret^bang!percent%\""
         );
         assert_eq!(windows_cmd_quote_hook_arg("plain-ref"), "plain-ref");
     }
