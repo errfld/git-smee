@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::process::Command as StdCommand;
 
 #[cfg(target_os = "linux")]
@@ -546,6 +546,69 @@ fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_argument
 
     #[cfg(windows)]
     assert!(hook_content.contains("run pre-commit %*"));
+}
+
+#[cfg(windows)]
+#[test]
+fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundtrip() {
+    let test_repo = common::TestRepo::default();
+    let observed = test_repo.path.join("metachar-args.txt");
+    let capture_script = test_repo.path.join("capture-metachar-args.ps1");
+    let observed_for_powershell = observed.to_string_lossy().replace('"', "`\"");
+    fs::write(
+        &capture_script,
+        format!(
+            r#"$values = @(
+  $env:GIT_SMEE_HOOK_ARGC,
+  $env:GIT_SMEE_HOOK_ARG_1,
+  $env:GIT_SMEE_HOOK_ARG_2,
+  $env:GIT_SMEE_HOOK_ARG_3,
+  $env:GIT_SMEE_HOOK_ARG_4,
+  $env:GIT_SMEE_HOOK_ARG_5,
+  $env:GIT_SMEE_HOOK_ARG_6,
+  $env:GIT_SMEE_HOOK_ARG_7
+)
+[System.IO.File]::WriteAllText("{observed_for_powershell}", ($values -join "`n"))
+"#
+        ),
+    )
+    .expect("failed to write capture script");
+    let capture_script_for_cmd = capture_script.to_string_lossy().replace('"', "\"\"");
+    test_repo.write_config(&format!(
+        "[[commit-msg]]\ncommand = \"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \\\"{capture_script_for_cmd}\\\"\"\n"
+    ));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook = test_repo.path.join(".git/hooks/commit-msg");
+    let args = [
+        "alpha&bravo",
+        "pipe|value",
+        "caret^value",
+        "bang!value",
+        "paren(value)",
+        "percent%value",
+        "space value",
+    ];
+    let status = StdCommand::new("cmd")
+        .current_dir(&test_repo.path)
+        .args(["/V:ON", "/C"])
+        .arg(&hook)
+        .args(args)
+        .status()
+        .expect("failed to run installed Windows hook wrapper through cmd.exe");
+    assert!(status.success(), "installed hook wrapper failed: {status}");
+
+    let mut expected = vec![args.len().to_string()];
+    expected.extend(args.iter().map(|arg| (*arg).to_string()));
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(observed).expect("missing observed args")),
+        format!("{}\n", expected.join("\n"))
+    );
 }
 
 #[cfg(unix)]
