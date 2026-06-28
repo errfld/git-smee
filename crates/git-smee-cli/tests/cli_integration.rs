@@ -37,6 +37,30 @@ fn git(test_repo: &common::TestRepo, args: &[&str]) {
     assert!(status.success(), "git {args:?} failed with {status}");
 }
 
+#[cfg(windows)]
+fn git_for_windows_sh(test_repo: &common::TestRepo) -> PathBuf {
+    let output = StdCommand::new("git")
+        .current_dir(&test_repo.path)
+        .arg("--exec-path")
+        .output()
+        .expect("failed to locate Git for Windows exec path");
+    assert!(output.status.success(), "git --exec-path failed");
+
+    let exec_path = String::from_utf8(output.stdout).expect("git exec path should be UTF-8");
+    let exec_path = std::path::PathBuf::from(exec_path.trim());
+    let git_root = exec_path
+        .ancestors()
+        .nth(3)
+        .expect("Git for Windows exec path should be under <Git>/mingw64/libexec/git-core");
+    let sh = git_root.join("usr").join("bin").join("sh.exe");
+    assert!(
+        sh.exists(),
+        "Git for Windows sh.exe not found at {}",
+        sh.display()
+    );
+    sh
+}
+
 #[test]
 fn given_git_smee_when_help_then_success() {
     let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
@@ -587,7 +611,8 @@ for ($i = 1; $i -le [int]$env:GIT_SMEE_HOOK_ARGC; $i++) {{
         "paren(value)",
         "space value",
     ];
-    let status = StdCommand::new("sh")
+    let sh = git_for_windows_sh(&test_repo);
+    let status = StdCommand::new(sh)
         .current_dir(&test_repo.path)
         .arg(&hook)
         .args(args)
