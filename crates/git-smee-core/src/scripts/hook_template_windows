@@ -1,17 +1,22 @@
-@echo off
-REM DO NOT MODIFY THIS FILE DIRECTLY
-REM THIS FILE IS MANAGED BY git-smee
-REM Keep literal ! characters in embedded paths stable even when the
-REM parent cmd.exe was launched with delayed expansion enabled (/V:ON).
-setlocal DisableDelayedExpansion
+#!/usr/bin/env sh
+# DO NOT MODIFY THIS FILE DIRECTLY
+# THIS FILE IS MANAGED BY git-smee
 
-set "GIT_SMEE_BIN={git_smee_executable}"
-set "GIT_SMEE_CONFIG={config_path}"
+set -e
 
-if not exist "%GIT_SMEE_BIN%" (
-  echo git-smee: embedded git-smee executable is not available: "%GIT_SMEE_BIN%" 1>&2
-  echo git-smee: run "git smee install" again to refresh this hook wrapper. 1>&2
-  exit /b 127
-)
+GIT_SMEE_BIN_WIN={git_smee_executable}
+GIT_SMEE_CONFIG={config_path}
 
-"%GIT_SMEE_BIN%" --config "%GIT_SMEE_CONFIG%" run {hook} %*
+if command -v cygpath >/dev/null 2>&1; then
+  GIT_SMEE_BIN=$(cygpath -u "$GIT_SMEE_BIN_WIN")
+else
+  GIT_SMEE_BIN=$GIT_SMEE_BIN_WIN
+fi
+
+if [ ! -f "$GIT_SMEE_BIN" ]; then
+  echo "git-smee: embedded git-smee executable is not available: $GIT_SMEE_BIN_WIN" >&2
+  echo "git-smee: run 'git smee install' again to refresh this hook wrapper." >&2
+  exit 127
+fi
+
+exec "$GIT_SMEE_BIN" --config "$GIT_SMEE_CONFIG" run {hook} "$@"

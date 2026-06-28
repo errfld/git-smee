@@ -37,6 +37,30 @@ fn git(test_repo: &common::TestRepo, args: &[&str]) {
     assert!(status.success(), "git {args:?} failed with {status}");
 }
 
+#[cfg(windows)]
+fn git_for_windows_sh(test_repo: &common::TestRepo) -> std::path::PathBuf {
+    let output = StdCommand::new("git")
+        .current_dir(&test_repo.path)
+        .arg("--exec-path")
+        .output()
+        .expect("failed to locate Git for Windows exec path");
+    assert!(output.status.success(), "git --exec-path failed");
+
+    let exec_path = String::from_utf8(output.stdout).expect("git exec path should be UTF-8");
+    let exec_path = std::path::PathBuf::from(exec_path.trim());
+    let git_root = exec_path
+        .ancestors()
+        .nth(3)
+        .expect("Git for Windows exec path should be under <Git>/mingw64/libexec/git-core");
+    let sh = git_root.join("usr").join("bin").join("sh.exe");
+    assert!(
+        sh.exists(),
+        "Git for Windows sh.exe not found at {}",
+        sh.display()
+    );
+    sh
+}
+
 #[test]
 fn given_git_smee_when_help_then_success() {
     let mut cmd = Command::new(cargo::cargo_bin!("git-smee"));
@@ -545,7 +569,7 @@ fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_argument
     assert!(hook_content.contains("run pre-commit \"$@\""));
 
     #[cfg(windows)]
-    assert!(hook_content.contains("run pre-commit %*"));
+    assert!(hook_content.contains("run pre-commit \"$@\""));
 }
 
 #[cfg(windows)]
@@ -580,10 +604,6 @@ for ($i = 1; $i -le [int]$env:GIT_SMEE_HOOK_ARGC; $i++) {{
         .success();
 
     let hook = test_repo.path.join(".git/hooks/commit-msg");
-    // Copy the generated wrapper to a .bat path so this #112 regression isolates
-    // argument forwarding from #176's no-extension Git-for-Windows spawn gap.
-    let hook_bat = test_repo.path.join("commit-msg-wrapper.bat");
-    fs::copy(&hook, &hook_bat).expect("failed to make batch-executable wrapper copy");
     let args = [
         "alpha&bravo",
         "pipe|value",
@@ -591,24 +611,13 @@ for ($i = 1; $i -le [int]$env:GIT_SMEE_HOOK_ARGC; $i++) {{
         "paren(value)",
         "space value",
     ];
-    let hook_for_cmd = hook_bat.to_string_lossy().replace('"', "\"\"");
-    let quoted_args = args
-        .iter()
-        .map(|arg| quote_windows_cmd_arg(arg))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let driver = test_repo.path.join("invoke-metachar-wrapper.cmd");
-    fs::write(
-        &driver,
-        format!("@echo off\r\ncall \"{hook_for_cmd}\" {quoted_args}\r\nexit /b %ERRORLEVEL%\r\n"),
-    )
-    .expect("failed to write wrapper driver");
-    let status = StdCommand::new("cmd")
+    let sh = git_for_windows_sh(&test_repo);
+    let status = StdCommand::new(sh)
         .current_dir(&test_repo.path)
-        .args(["/V:ON", "/C"])
-        .arg(&driver)
+        .arg(&hook)
+        .args(args)
         .status()
-        .expect("failed to run Windows hook wrapper through cmd.exe");
+        .expect("failed to run Windows hook wrapper through sh");
     assert!(status.success(), "installed hook wrapper failed: {status}");
 
     let mut expected = vec![args.len().to_string()];
@@ -1663,16 +1672,6 @@ fn normalize_test_newlines(value: &str) -> String {
     value.replace("\r\n", "\n")
 }
 
-#[cfg(windows)]
-fn quote_windows_cmd_arg(arg: &str) -> String {
-    let escaped = arg
-        .replace('^', "^^")
-        .replace('!', "^!")
-        .replace('%', "%%")
-        .replace('"', "\"\"");
-    format!("\"{escaped}\"")
-}
-
 #[cfg(not(windows))]
 fn normalize_test_newlines(value: &str) -> String {
     value.to_string()
@@ -1888,10 +1887,7 @@ command = "echo custom"
 
     #[cfg(windows)]
     {
-        let expected = custom_config
-            .to_string_lossy()
-            .replace('"', "\"\"")
-            .replace('%', "%%");
+        let expected = custom_config.to_string_lossy().replace('\'', "'\"'\"'");
         assert!(hook_content.contains(&expected));
     }
 }

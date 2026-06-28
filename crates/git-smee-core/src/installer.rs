@@ -583,14 +583,8 @@ pub fn install_hooks_with_options<T: HookInstaller>(
         return Err(Error::NoHooksPresent);
     }
     let platform = Platform::current();
-    let escaped_executable = match platform {
-        Platform::Unix => shell_single_quote(&options.git_smee_executable),
-        Platform::Windows => cmd_escape(&options.git_smee_executable),
-    };
-    let escaped_config_path = match platform {
-        Platform::Unix => shell_single_quote(&options.config_path),
-        Platform::Windows => cmd_escape(&options.config_path),
-    };
+    let escaped_executable = shell_single_quote(&options.git_smee_executable);
+    let escaped_config_path = shell_single_quote(&options.config_path);
     let mut phases: Vec<_> = config.hooks.keys().copied().collect();
     phases.sort_by_key(|phase| phase.as_str());
     let active_hook_names: Vec<_> = phases.iter().map(|phase| phase.to_string()).collect();
@@ -641,12 +635,6 @@ fn unix_shell_path_word(path: &Path) -> String {
 #[cfg(not(unix))]
 fn unix_shell_path_word(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
-}
-
-fn cmd_escape(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('"', "\"\"")
-        .replace('%', "%%")
 }
 
 #[cfg(test)]
@@ -934,16 +922,6 @@ mod tests {
     }
 
     #[test]
-    fn cmd_escape_escapes_percent_and_double_quotes() {
-        let path = Path::new(r#"C:\Program Files\100%"quoted"\git-smee.exe"#);
-
-        assert_eq!(
-            cmd_escape(path),
-            r#"C:\Program Files\100%%""quoted""\git-smee.exe"#
-        );
-    }
-
-    #[test]
     fn unix_hook_template_does_not_fall_back_to_path_when_embedded_binary_is_stale() {
         let template = Platform::Unix.hook_script_template();
 
@@ -957,27 +935,23 @@ mod tests {
     fn windows_hook_template_does_not_fall_back_to_path_when_embedded_binary_is_stale() {
         let template = Platform::Windows.hook_script_template();
 
-        assert!(!template.contains("where git-smee"));
+        assert!(!template.contains("command -v git-smee"));
         assert!(!template.contains("git-smee --config"));
         assert!(!template.contains("git smee --config"));
         assert!(template.contains("embedded git-smee executable is not available"));
     }
 
     #[test]
-    fn windows_hook_template_disables_delayed_expansion_before_embedding_paths() {
+    fn windows_hook_template_is_git_for_windows_shell_invokable() {
         let template = Platform::Windows.hook_script_template();
-        let disable_position = template
-            .find("setlocal DisableDelayedExpansion")
-            .expect("windows hook template should disable delayed expansion");
-        let bin_assignment_position = template
-            .find("set \"GIT_SMEE_BIN=")
-            .expect("windows hook template should embed git-smee executable path");
-        let config_assignment_position = template
-            .find("set \"GIT_SMEE_CONFIG=")
-            .expect("windows hook template should embed config path");
 
-        assert!(disable_position < bin_assignment_position);
-        assert!(disable_position < config_assignment_position);
+        assert!(template.starts_with("#!/usr/bin/env sh"));
+        assert!(template.contains("GIT_SMEE_BIN_WIN={git_smee_executable}"));
+        assert!(template.contains("GIT_SMEE_CONFIG={config_path}"));
+        assert!(template.contains("cygpath -u \"$GIT_SMEE_BIN_WIN\""));
+        assert!(template.contains("run {hook} \"$@\""));
+        assert!(!template.contains("@echo off"));
+        assert!(!template.contains("%*"));
     }
 
     #[cfg(unix)]
@@ -1024,16 +998,19 @@ mod tests {
             PathBuf::from(r#"C:\Program Files\100%"quoted"\git-smee.exe"#),
             PathBuf::from(r#"C:\repo\configs\it's 100% "ready".toml"#),
         );
-        let installer =
-            AssertingHookInstaller::new(|hook_name, hook_content| {
-                assert_eq!(hook_name, "pre-commit");
-                assert!(hook_content.contains(
-                    r#"set "GIT_SMEE_BIN=C:\Program Files\100%%""quoted""\git-smee.exe""#
-                ));
-                assert!(hook_content.contains(
-                    r#"set "GIT_SMEE_CONFIG=C:\repo\configs\it's 100%% ""ready"".toml""#
-                ));
-            });
+        let installer = AssertingHookInstaller::new(|hook_name, hook_content| {
+            assert_eq!(hook_name, "pre-commit");
+            assert!(hook_content.starts_with("#!/usr/bin/env sh"));
+            assert!(
+                hook_content
+                    .contains(r#"GIT_SMEE_BIN_WIN='C:\Program Files\100%"quoted"\git-smee.exe'"#)
+            );
+            assert!(
+                hook_content.contains(
+                    "GIT_SMEE_CONFIG='C:\\repo\\configs\\it'\"'\"'s 100% \"ready\".toml'"
+                )
+            );
+        });
 
         let result = install_hooks_with_options(&config, &installer, &options);
         assert!(result.is_ok());
