@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::process::Command as StdCommand;
 
 #[cfg(target_os = "linux")]
@@ -546,6 +546,77 @@ fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_argument
 
     #[cfg(windows)]
     assert!(hook_content.contains("run pre-commit %*"));
+}
+
+#[cfg(windows)]
+#[test]
+fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundtrip() {
+    let test_repo = common::TestRepo::default();
+    let observed = test_repo.path.join("metachar-args.txt");
+    let capture_script = test_repo.path.join("capture-metachar-args.ps1");
+    let observed_for_powershell = observed.to_string_lossy().replace('"', "`\"");
+    fs::write(
+        &capture_script,
+        format!(
+            r#"$values = @($env:GIT_SMEE_HOOK_ARGC)
+for ($i = 1; $i -le [int]$env:GIT_SMEE_HOOK_ARGC; $i++) {{
+  $values += [Environment]::GetEnvironmentVariable("GIT_SMEE_HOOK_ARG_$i")
+}}
+[System.IO.File]::WriteAllText("{observed_for_powershell}", ($values -join "`n"))
+"#
+        ),
+    )
+    .expect("failed to write capture script");
+    let command = format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {}",
+        capture_script.to_string_lossy()
+    );
+    test_repo.write_config(&format!("[[commit-msg]]\ncommand = {command:?}\n"));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&test_repo.path)
+        .arg("install")
+        .assert()
+        .success();
+
+    let hook = test_repo.path.join(".git/hooks/commit-msg");
+    // Copy the generated wrapper to a .bat path so this #112 regression isolates
+    // argument forwarding from #176's no-extension Git-for-Windows spawn gap.
+    let hook_bat = test_repo.path.join("commit-msg-wrapper.bat");
+    fs::copy(&hook, &hook_bat).expect("failed to make batch-executable wrapper copy");
+    let args = [
+        "alpha&bravo",
+        "pipe|value",
+        "bang!value",
+        "paren(value)",
+        "space value",
+    ];
+    let hook_for_cmd = hook_bat.to_string_lossy().replace('"', "\"\"");
+    let quoted_args = args
+        .iter()
+        .map(|arg| quote_windows_cmd_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let driver = test_repo.path.join("invoke-metachar-wrapper.cmd");
+    fs::write(
+        &driver,
+        format!("@echo off\r\ncall \"{hook_for_cmd}\" {quoted_args}\r\nexit /b %ERRORLEVEL%\r\n"),
+    )
+    .expect("failed to write wrapper driver");
+    let status = StdCommand::new("cmd")
+        .current_dir(&test_repo.path)
+        .args(["/V:ON", "/C"])
+        .arg(&driver)
+        .status()
+        .expect("failed to run Windows hook wrapper through cmd.exe");
+    assert!(status.success(), "installed hook wrapper failed: {status}");
+
+    let mut expected = vec![args.len().to_string()];
+    expected.extend(args.iter().map(|arg| (*arg).to_string()));
+    assert_eq!(
+        normalize_test_newlines(&fs::read_to_string(observed).expect("missing observed args")),
+        expected.join("\n")
+    );
 }
 
 #[cfg(unix)]
@@ -1590,6 +1661,16 @@ fn given_proc_receive_hook_when_running_then_stdin_is_inherited_by_command() {
 #[cfg(windows)]
 fn normalize_test_newlines(value: &str) -> String {
     value.replace("\r\n", "\n")
+}
+
+#[cfg(windows)]
+fn quote_windows_cmd_arg(arg: &str) -> String {
+    let escaped = arg
+        .replace('^', "^^")
+        .replace('!', "^!")
+        .replace('%', "%%")
+        .replace('"', "\"\"");
+    format!("\"{escaped}\"")
 }
 
 #[cfg(not(windows))]
