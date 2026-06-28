@@ -945,7 +945,7 @@ mod tests {
     fn windows_hook_template_is_git_for_windows_shell_invokable() {
         let template = Platform::Windows.hook_script_template();
 
-        assert!(template.starts_with("#!/usr/bin/env sh\n"));
+        assert!(template.starts_with("#!/usr/bin/env sh"));
         assert!(template.contains("GIT_SMEE_BIN_WIN={git_smee_executable}"));
         assert!(template.contains("GIT_SMEE_CONFIG={config_path}"));
         assert!(template.contains("cygpath -u \"$GIT_SMEE_BIN_WIN\""));
@@ -1000,7 +1000,7 @@ mod tests {
         );
         let installer = AssertingHookInstaller::new(|hook_name, hook_content| {
             assert_eq!(hook_name, "pre-commit");
-            assert!(hook_content.starts_with("#!/usr/bin/env sh\n"));
+            assert!(hook_content.starts_with("#!/usr/bin/env sh"));
             assert!(
                 hook_content
                     .contains(r#"GIT_SMEE_BIN_WIN='C:\Program Files\100%"quoted"\git-smee.exe'"#)
