@@ -545,7 +545,7 @@ fn given_install_when_generating_hook_script_then_wrapper_forwards_hook_argument
     assert!(hook_content.contains("run pre-commit \"$@\""));
 
     #[cfg(windows)]
-    assert!(hook_content.contains("run pre-commit %*"));
+    assert!(hook_content.contains("run pre-commit \"$@\""));
 }
 
 #[cfg(windows)]
