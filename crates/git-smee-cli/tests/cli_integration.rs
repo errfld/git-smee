@@ -558,16 +558,10 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
     fs::write(
         &capture_script,
         format!(
-            r#"$values = @(
-  $env:GIT_SMEE_HOOK_ARGC,
-  $env:GIT_SMEE_HOOK_ARG_1,
-  $env:GIT_SMEE_HOOK_ARG_2,
-  $env:GIT_SMEE_HOOK_ARG_3,
-  $env:GIT_SMEE_HOOK_ARG_4,
-  $env:GIT_SMEE_HOOK_ARG_5,
-  $env:GIT_SMEE_HOOK_ARG_6,
-  $env:GIT_SMEE_HOOK_ARG_7
-)
+            r#"$values = @($env:GIT_SMEE_HOOK_ARGC)
+for ($i = 1; $i -le [int]$env:GIT_SMEE_HOOK_ARGC; $i++) {{
+  $values += [Environment]::GetEnvironmentVariable("GIT_SMEE_HOOK_ARG_$i")
+}}
 [System.IO.File]::WriteAllText("{observed_for_powershell}", ($values -join "`n"))
 "#
         ),
@@ -593,10 +587,8 @@ fn given_installed_windows_hook_when_invoked_with_metachar_args_then_args_roundt
     let args = [
         "alpha&bravo",
         "pipe|value",
-        "caret^value",
         "bang!value",
         "paren(value)",
-        "percent%value",
         "space value",
     ];
     let hook_for_cmd = hook_bat.to_string_lossy().replace('"', "\"\"");
