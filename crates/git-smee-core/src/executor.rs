@@ -9,7 +9,7 @@ use crate::{SmeeConfig, config::LifeCyclePhase, platform::Platform};
 
 use runner::{CommandRunner, PlatformCommandRunner};
 use scheduler::{run_hooks_with_runner, run_hooks_with_runner_with_summary};
-pub use summary::{CommandPhase, HookRunSummary};
+pub use summary::{CommandPhase, CommandRun, HookRunSummary};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -316,9 +316,15 @@ mod tests {
     fn given_windows_hook_arg_with_cmd_metachar_when_quoting_then_it_is_wrapped() {
         assert_eq!(
             windows_cmd_quote_hook_arg("caret^bang!percent%"),
-            "\"caret^bang!percent%\""
+            "\"caret^^bang^!percent%%\""
         );
         assert_eq!(windows_cmd_quote_hook_arg("plain-ref"), "plain-ref");
+    }
+
+    #[test]
+    fn given_windows_hook_arg_with_expansion_syntax_when_quoting_then_it_stays_literal() {
+        assert_eq!(windows_cmd_quote_hook_arg("%PATH%"), "\"%%PATH%%\"");
+        assert_eq!(windows_cmd_quote_hook_arg("!PATH!"), "\"^!PATH^!\"");
     }
 
     #[test]

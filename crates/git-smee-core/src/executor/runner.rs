@@ -125,8 +125,21 @@ pub(super) fn windows_cmd_quote_hook_arg(arg: &str) -> String {
         return arg.to_string();
     }
 
-    let escaped = arg.replace('"', "\"\"");
+    let escaped = escape_windows_cmd_arg(arg).replace('"', "\"\"");
     format!("\"{escaped}\"")
+}
+
+fn escape_windows_cmd_arg(arg: &str) -> String {
+    let mut escaped = String::with_capacity(arg.len());
+    for ch in arg.chars() {
+        match ch {
+            '^' => escaped.push_str("^^"),
+            '%' => escaped.push_str("%%"),
+            '!' => escaped.push_str("^!"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 pub(super) fn windows_command_script(command: &str) -> String {
