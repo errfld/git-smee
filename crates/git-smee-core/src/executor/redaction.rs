@@ -1,4 +1,4 @@
-pub(super) fn redact_command(command: &str) -> String {
+pub(crate) fn redact_command(command: &str) -> String {
     let tokens = tokenize_command(command);
     let executable_index = tokens
         .iter()

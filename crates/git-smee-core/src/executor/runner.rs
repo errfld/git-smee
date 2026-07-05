@@ -10,12 +10,12 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use std::path::PathBuf;
 
-use crate::platform::Platform;
+use crate::{config::HookCommand, platform::Platform};
 
 pub(super) trait CommandRunner: Sync {
     fn run(
         &self,
-        command: &str,
+        command: &HookCommand,
         hook_args: &[String],
         stdin_payload: Option<&[u8]>,
     ) -> Result<Option<i32>, std::io::Error>;
@@ -29,7 +29,7 @@ pub(super) struct PlatformCommandRunner<'a> {
 impl CommandRunner for PlatformCommandRunner<'_> {
     fn run(
         &self,
-        command: &str,
+        command: &HookCommand,
         hook_args: &[String],
         stdin_payload: Option<&[u8]>,
     ) -> Result<Option<i32>, std::io::Error> {
@@ -38,12 +38,12 @@ impl CommandRunner for PlatformCommandRunner<'_> {
         let mut _windows_command_script = None;
         match self.platform {
             Platform::Unix => {
-                shell_command.arg(command);
+                shell_command.arg(command.as_shell_source());
                 shell_command.arg("--");
                 shell_command.args(hook_args);
             }
             Platform::Windows => {
-                let command_script = create_windows_command_script(command)?;
+                let command_script = create_windows_command_script(command.as_shell_source())?;
                 shell_command.arg(&command_script);
                 #[cfg(windows)]
                 append_windows_hook_args(&mut shell_command, hook_args);
