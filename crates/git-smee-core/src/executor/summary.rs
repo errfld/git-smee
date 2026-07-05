@@ -137,7 +137,6 @@ impl CommandRun {
             CommandOutcome::Exit(code) => format!("failed with code {code}"),
             CommandOutcome::Signal => "terminated by signal".to_string(),
             CommandOutcome::SpawnFailed { .. } => "spawn failed".to_string(),
-            CommandOutcome::NoCommandDefined => "no command defined".to_string(),
         }
     }
 
@@ -154,7 +153,6 @@ impl CommandRun {
             } => {
                 format!("{prefix} failed to spawn '{command}' via '{shell}': {source}")
             }
-            CommandOutcome::NoCommandDefined => format!("{prefix} had no command defined"),
         }
     }
 
@@ -172,7 +170,6 @@ impl CommandRun {
                 shell: shell.clone(),
                 source: io::Error::new(source.kind(), source.to_string()),
             }),
-            CommandOutcome::NoCommandDefined => Some(Error::NoCommandDefined),
         }
     }
 }
@@ -187,7 +184,6 @@ pub(super) enum CommandOutcome {
         shell: String,
         source: io::Error,
     },
-    NoCommandDefined,
 }
 
 impl CommandOutcome {

@@ -75,7 +75,7 @@ impl SmeeConfig {
             }
 
             for (index, hook_definition) in hooks.iter().enumerate() {
-                if hook_definition.command.trim().is_empty() {
+                if hook_definition.command.is_empty() {
                     return Err(ValidationError::EmptyCommand {
                         hook_name: phase.to_string(),
                         entry_index: index + 1,
@@ -94,7 +94,7 @@ impl Default for SmeeConfig {
         hash_map.insert(
             LifeCyclePhase::PreCommit,
             vec![HookDefinition {
-                command: "echo 'Default pre-commit hook'".to_string(),
+                command: "echo 'Default pre-commit hook'".into(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -121,9 +121,51 @@ impl TryFrom<&SmeeConfig> for String {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HookDefinition {
-    pub command: String,
+    pub command: HookCommand,
     #[serde(default = "bool::default")]
     pub parallel_execution_allowed: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HookCommand(String);
+
+impl HookCommand {
+    pub fn as_shell_source(&self) -> &str {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.trim().is_empty()
+    }
+
+    pub(crate) fn redacted(&self) -> String {
+        crate::executor::redaction::redact_command(self.as_shell_source())
+    }
+}
+
+impl From<String> for HookCommand {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for HookCommand {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl PartialEq<&str> for HookCommand {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_shell_source() == *other
+    }
+}
+
+impl PartialEq<HookCommand> for &str {
+    fn eq(&self, other: &HookCommand) -> bool {
+        *self == other.as_shell_source()
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Debug, Clone, Copy)]
@@ -422,17 +464,36 @@ mod tests {
     }
 
     #[test]
+    fn given_hook_command_when_inspecting_then_shell_source_and_redacted_display_are_owned_by_type()
+    {
+        let command = HookCommand::from("TOKEN=super-secret deploy --token hidden");
+
+        assert_eq!(
+            command.as_shell_source(),
+            "TOKEN=super-secret deploy --token hidden"
+        );
+        assert_eq!(command.redacted(), "deploy <args redacted>");
+    }
+
+    #[test]
+    fn given_whitespace_hook_command_when_checking_empty_then_command_type_rejects_it() {
+        let command = HookCommand::from("   ");
+
+        assert!(command.is_empty());
+    }
+
+    #[test]
     fn given_empty_command_when_validating_then_error_contains_hook_and_entry() {
         let mut hooks = HashMap::new();
         hooks.insert(
             LifeCyclePhase::PreCommit,
             vec![
                 HookDefinition {
-                    command: "cargo test".to_string(),
+                    command: "cargo test".into(),
                     parallel_execution_allowed: false,
                 },
                 HookDefinition {
-                    command: "   ".to_string(),
+                    command: "   ".into(),
                     parallel_execution_allowed: false,
                 },
             ],
@@ -472,7 +533,7 @@ mod tests {
         hooks.insert(
             LifeCyclePhase::PreCommit,
             vec![HookDefinition {
-                command: "cargo test".to_string(),
+                command: "cargo test".into(),
                 parallel_execution_allowed: false,
             }],
         );

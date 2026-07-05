@@ -6,11 +6,10 @@ use std::{
 use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::*;
 
-use crate::config::HookDefinition;
+use crate::config::{HookCommand, HookDefinition};
 
 use super::{
     Error,
-    redaction::redact_command,
     runner::CommandRunner,
     summary::{CommandOutcome, CommandPhase, CommandRun, HookRunSummary},
 };
@@ -112,25 +111,21 @@ fn lock_command_runs(
 fn execute_command_record(
     phase: CommandPhase,
     index: usize,
-    command: &str,
+    command: &HookCommand,
     runner: &impl CommandRunner,
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> CommandRun {
     let started = Instant::now();
-    let outcome = if command.trim().is_empty() {
-        CommandOutcome::NoCommandDefined
-    } else {
-        match runner.run(command, hook_args, stdin_payload) {
-            Ok(Some(0)) => CommandOutcome::Success,
-            Ok(Some(exit_status_code)) => CommandOutcome::Exit(exit_status_code),
-            Ok(None) => CommandOutcome::Signal,
-            Err(source) => CommandOutcome::SpawnFailed {
-                command: redact_command(command),
-                shell: runner.shell_display().to_string(),
-                source,
-            },
-        }
+    let outcome = match runner.run(command, hook_args, stdin_payload) {
+        Ok(Some(0)) => CommandOutcome::Success,
+        Ok(Some(exit_status_code)) => CommandOutcome::Exit(exit_status_code),
+        Ok(None) => CommandOutcome::Signal,
+        Err(source) => CommandOutcome::SpawnFailed {
+            command: command.redacted(),
+            shell: runner.shell_display().to_string(),
+            source,
+        },
     };
     CommandRun {
         phase,
@@ -142,18 +137,18 @@ fn execute_command_record(
 
 #[cfg(test)]
 pub(super) fn execute_command(
-    command: &str,
+    command: &HookCommand,
     runner: &impl CommandRunner,
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    if command.trim().is_empty() {
+    if command.is_empty() {
         return Err(Error::NoCommandDefined);
     }
     let exit_code = runner
         .run(command, hook_args, stdin_payload)
         .map_err(|source| Error::CommandSpawnFailed {
-            command: redact_command(command),
+            command: command.redacted(),
             shell: runner.shell_display().to_string(),
             source,
         })?;

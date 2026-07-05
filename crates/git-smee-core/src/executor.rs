@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-mod redaction;
+pub(crate) mod redaction;
 mod runner;
 mod scheduler;
 mod summary;
@@ -145,7 +145,10 @@ mod tests {
     use assert2::assert;
     use proptest::prelude::*;
 
-    use crate::{config::HookDefinition, test_support::process_state_lock};
+    use crate::{
+        config::{HookCommand, HookDefinition},
+        test_support::process_state_lock,
+    };
 
     use super::redaction::redact_command;
     use super::runner::{
@@ -215,21 +218,26 @@ mod tests {
     impl CommandRunner for FakeRunner {
         fn run(
             &self,
-            command: &str,
+            command: &HookCommand,
             hook_args: &[String],
             stdin_payload: Option<&[u8]>,
         ) -> Result<Option<i32>, io::Error> {
             let outcome = {
                 let mut state = self.state.lock().unwrap();
-                state.calls.push(command.to_string());
+                state.calls.push(command.as_shell_source().to_string());
                 state.hook_args_calls.push(hook_args.to_vec());
                 state.stdin_calls.push(stdin_payload.map(Vec::from));
                 state
                     .outcomes_by_command
-                    .get_mut(command)
+                    .get_mut(command.as_shell_source())
                     .and_then(VecDeque::pop_front)
                     .or_else(|| state.default_outcomes.pop_front())
-                    .unwrap_or_else(|| panic!("no fake outcome configured for command '{command}'"))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "no fake outcome configured for command '{}'",
+                            command.as_shell_source()
+                        )
+                    })
             };
             match outcome {
                 PlannedResult::Exit(code) => Ok(code),
@@ -265,7 +273,7 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "run-pre-commit".to_string(),
+                command: "run-pre-commit".into(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -284,7 +292,7 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::CommitMsg,
             vec![crate::config::HookDefinition {
-                command: "check-commit-message".to_string(),
+                command: "check-commit-message".into(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -336,11 +344,11 @@ mod tests {
     fn given_summary_success_when_rendering_then_counts_phases_and_durations() {
         let hooks = vec![
             HookDefinition {
-                command: "seq-ok".to_string(),
+                command: "seq-ok".into(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel-ok".to_string(),
+                command: "parallel-ok".into(),
                 parallel_execution_allowed: true,
             },
         ];
@@ -375,15 +383,15 @@ mod tests {
     fn given_summary_sequential_failure_when_rendering_then_reports_skipped_and_first_failure() {
         let hooks = vec![
             HookDefinition {
-                command: "seq-fail".to_string(),
+                command: "seq-fail".into(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "seq-skipped".to_string(),
+                command: "seq-skipped".into(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel-skipped".to_string(),
+                command: "parallel-skipped".into(),
                 parallel_execution_allowed: true,
             },
         ];
@@ -448,7 +456,7 @@ mod tests {
     #[test]
     fn given_spawn_failure_when_rendering_summary_then_status_and_error_are_redacted() {
         let hooks = vec![HookDefinition {
-            command: "SECRET=value deploy --token super-secret-value".to_string(),
+            command: "SECRET=value deploy --token super-secret-value".into(),
             parallel_execution_allowed: false,
         }];
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
@@ -479,11 +487,11 @@ mod tests {
     fn given_stdin_payload_when_executing_then_each_command_receives_the_same_bytes() {
         let hooks = vec![
             HookDefinition {
-                command: "first".to_string(),
+                command: "first".into(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "second".to_string(),
+                command: "second".into(),
                 parallel_execution_allowed: false,
             },
         ];
@@ -624,7 +632,7 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "hook command".to_string(),
+                command: "hook command".into(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -643,7 +651,12 @@ mod tests {
             io::ErrorKind::NotFound,
         )]);
 
-        let result = execute_command("deploy --token super-secret-value", &runner, &[], None);
+        let result = execute_command(
+            &HookCommand::from("deploy --token super-secret-value"),
+            &runner,
+            &[],
+            None,
+        );
 
         match result {
             Err(Error::CommandSpawnFailed {
@@ -666,7 +679,7 @@ mod tests {
         )]);
 
         let result = execute_command(
-            "TOKEN=super-secret API_KEY=123 deploy --arg value",
+            &HookCommand::from("TOKEN=super-secret API_KEY=123 deploy --arg value"),
             &runner,
             &[],
             None,
@@ -690,7 +703,9 @@ mod tests {
         )]);
 
         let result = execute_command(
-            "TOKEN=\"super secret\" API_KEY='another secret' ./deploy --arg value",
+            &HookCommand::from(
+                "TOKEN=\"super secret\" API_KEY='another secret' ./deploy --arg value",
+            ),
             &runner,
             &[],
             None,
@@ -754,14 +769,14 @@ mod tests {
     #[test]
     fn given_empty_command_when_executing_then_no_command_defined_error() {
         let runner = FakeRunner::with_default_outcomes(vec![]);
-        let result = execute_command("   ", &runner, &[], None);
+        let result = execute_command(&HookCommand::from("   "), &runner, &[], None);
         assert!(matches!(result, Err(Error::NoCommandDefined)));
     }
 
     #[test]
     fn given_missing_exit_code_when_executing_then_terminated_by_signal_error() {
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(None)]);
-        let result = execute_command("run-hook", &runner, &[], None);
+        let result = execute_command(&HookCommand::from("run-hook"), &runner, &[], None);
         assert!(matches!(result, Err(Error::ExecutionTerminatedBySignal)));
     }
 
@@ -773,7 +788,7 @@ mod tests {
             ["parallel-1", "parallel-2", "parallel-3", "parallel-4"]
                 .iter()
                 .map(|command| HookDefinition {
-                    command: command.to_string(),
+                    command: (*command).into(),
                     parallel_execution_allowed: true,
                 })
                 .collect(),
@@ -809,16 +824,16 @@ mod tests {
         let mut hook_definitions: Vec<HookDefinition> = ["parallel-1", "parallel-2", "parallel-3"]
             .iter()
             .map(|command| HookDefinition {
-                command: command.to_string(),
+                command: (*command).into(),
                 parallel_execution_allowed: true,
             })
             .collect();
         hook_definitions.push(HookDefinition {
-            command: "sequential-1".to_string(),
+            command: "sequential-1".into(),
             parallel_execution_allowed: false,
         });
         hook_definitions.push(HookDefinition {
-            command: "sequential-2".to_string(),
+            command: "sequential-2".into(),
             parallel_execution_allowed: false,
         });
 
@@ -857,11 +872,11 @@ mod tests {
     fn given_failed_sequential_hook_when_executing_then_parallel_hooks_do_not_run() {
         let hooks = vec![
             HookDefinition {
-                command: "sequential".to_string(),
+                command: "sequential".into(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel".to_string(),
+                command: "parallel".into(),
                 parallel_execution_allowed: true,
             },
         ];
@@ -881,15 +896,15 @@ mod tests {
         let barrier = Arc::new(Barrier::new(2));
         let hooks = vec![
             HookDefinition {
-                command: "sequential".to_string(),
+                command: "sequential".into(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel-ok".to_string(),
+                command: "parallel-ok".into(),
                 parallel_execution_allowed: true,
             },
             HookDefinition {
-                command: "parallel-fail".to_string(),
+                command: "parallel-fail".into(),
                 parallel_execution_allowed: true,
             },
         ];
