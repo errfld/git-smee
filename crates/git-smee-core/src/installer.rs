@@ -555,7 +555,7 @@ fn is_managed_file(path: &Path) -> Result<bool, Error> {
 /// hooks.insert(
 ///     LifeCyclePhase::PreCommit,
 ///     vec![HookDefinition {
-///         command: "echo pre-commit".to_string(),
+///         command: "echo pre-commit".into(),
 ///         parallel_execution_allowed: false,
 ///     }],
 /// );
