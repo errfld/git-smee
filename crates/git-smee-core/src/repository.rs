@@ -205,23 +205,12 @@ impl GitClient for RealGitClient {
         current_dir: &Path,
         flag: &str,
     ) -> Result<GitCommandResult<bool>, Error> {
-        let output = Command::new("git")
-            .current_dir(current_dir)
-            .arg("rev-parse")
-            .arg(flag)
-            .output()
-            .map_err(Error::FailedToExecuteGit)?;
-
-        if !output.status.success() {
-            return Ok(GitCommandResult::Failure(GitCommandFailure::from_output(
-                &output.stderr,
-                output.status,
-            )));
+        match run_git_command(git_rev_parse_command(current_dir, flag))? {
+            GitCommandResult::Success(stdout) => Ok(GitCommandResult::Success(
+                String::from_utf8_lossy(&stdout).trim() == "true",
+            )),
+            GitCommandResult::Failure(failure) => Ok(GitCommandResult::Failure(failure)),
         }
-
-        Ok(GitCommandResult::Success(
-            String::from_utf8_lossy(&output.stdout).trim() == "true",
-        ))
     }
 
     fn rev_parse_path_bytes(
@@ -229,21 +218,7 @@ impl GitClient for RealGitClient {
         current_dir: &Path,
         flag: &str,
     ) -> Result<GitCommandResult<Vec<u8>>, Error> {
-        let output = Command::new("git")
-            .current_dir(current_dir)
-            .arg("rev-parse")
-            .arg(flag)
-            .output()
-            .map_err(Error::FailedToExecuteGit)?;
-
-        if !output.status.success() {
-            return Ok(GitCommandResult::Failure(GitCommandFailure::from_output(
-                &output.stderr,
-                output.status,
-            )));
-        }
-
-        Ok(GitCommandResult::Success(output.stdout))
+        run_git_command(git_rev_parse_command(current_dir, flag))
     }
 
     fn git_path_bytes(
@@ -251,22 +226,29 @@ impl GitClient for RealGitClient {
         repository_root: &Path,
         git_path: &str,
     ) -> Result<GitCommandResult<Vec<u8>>, Error> {
-        let output = git_command_with_explicit_repo(repository_root)
-            .arg("rev-parse")
-            .arg("--git-path")
-            .arg(git_path)
-            .output()
-            .map_err(Error::FailedToExecuteGit)?;
-
-        if !output.status.success() {
-            return Ok(GitCommandResult::Failure(GitCommandFailure::from_output(
-                &output.stderr,
-                output.status,
-            )));
-        }
-
-        Ok(GitCommandResult::Success(output.stdout))
+        let mut command = git_command_with_explicit_repo(repository_root);
+        command.arg("rev-parse").arg("--git-path").arg(git_path);
+        run_git_command(command)
     }
+}
+
+fn git_rev_parse_command(current_dir: &Path, flag: &str) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(current_dir).arg("rev-parse").arg(flag);
+    command
+}
+
+fn run_git_command(mut command: Command) -> Result<GitCommandResult<Vec<u8>>, Error> {
+    let output = command.output().map_err(Error::FailedToExecuteGit)?;
+
+    if !output.status.success() {
+        return Ok(GitCommandResult::Failure(GitCommandFailure::from_output(
+            &output.stderr,
+            output.status,
+        )));
+    }
+
+    Ok(GitCommandResult::Success(output.stdout))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
