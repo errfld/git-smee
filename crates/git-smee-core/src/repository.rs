@@ -2,7 +2,7 @@ use std::{
     env,
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, ExitStatus},
 };
 use thiserror::Error;
 
@@ -75,13 +75,17 @@ pub fn find_git_root() -> Result<PathBuf, Error> {
 }
 
 fn find_git_root_from_path(current_dir: &Path) -> Result<PathBuf, Error> {
-    if git_rev_parse_bool(current_dir, "--is-inside-work-tree")?
-        && let Some(root) = git_rev_parse_path(current_dir, "--show-toplevel")?
+    find_git_root_with_client(&RealGitClient, current_dir)
+}
+
+fn find_git_root_with_client(git: &impl GitClient, current_dir: &Path) -> Result<PathBuf, Error> {
+    if git_rev_parse_bool(git, current_dir, "--is-inside-work-tree")?
+        && let Some(root) = git_rev_parse_path(git, current_dir, "--show-toplevel")?
     {
         let canonical_root = root
             .canonicalize()
             .map_err(Error::FailedToChangeDirectory)?;
-        if !git_rev_parse_bool(current_dir, "--is-bare-repository")?
+        if !git_rev_parse_bool(git, current_dir, "--is-bare-repository")?
             && canonical_root.file_name() == Some(OsStr::new(".git"))
             && let Some(worktree_root) = canonical_root.parent()
         {
@@ -92,10 +96,10 @@ fn find_git_root_from_path(current_dir: &Path) -> Result<PathBuf, Error> {
         return Ok(canonical_root);
     }
 
-    if git_rev_parse_bool(current_dir, "--is-inside-git-dir")?
-        && let Some(git_dir) = git_rev_parse_path(current_dir, "--absolute-git-dir")?
+    if git_rev_parse_bool(git, current_dir, "--is-inside-git-dir")?
+        && let Some(git_dir) = git_rev_parse_path(git, current_dir, "--absolute-git-dir")?
     {
-        if git_rev_parse_bool(current_dir, "--is-bare-repository")? {
+        if git_rev_parse_bool(git, current_dir, "--is-bare-repository")? {
             return git_dir
                 .canonicalize()
                 .map_err(Error::FailedToChangeDirectory);
@@ -114,8 +118,8 @@ fn find_git_root_from_path(current_dir: &Path) -> Result<PathBuf, Error> {
             .map_err(Error::FailedToChangeDirectory);
     }
 
-    if git_rev_parse_bool(current_dir, "--is-bare-repository")? {
-        if let Some(git_dir) = git_rev_parse_path(current_dir, "--absolute-git-dir")? {
+    if git_rev_parse_bool(git, current_dir, "--is-bare-repository")? {
+        if let Some(git_dir) = git_rev_parse_path(git, current_dir, "--absolute-git-dir")? {
             return git_dir
                 .canonicalize()
                 .map_err(Error::FailedToChangeDirectory);
@@ -128,68 +132,143 @@ fn find_git_root_from_path(current_dir: &Path) -> Result<PathBuf, Error> {
     Err(Error::NotInGitRepository)
 }
 
-fn git_rev_parse_bool(current_dir: &Path, flag: &str) -> Result<bool, Error> {
-    let output = Command::new("git")
-        .current_dir(current_dir)
-        .arg("rev-parse")
-        .arg(flag)
-        .output()
-        .map_err(Error::FailedToExecuteGit)?;
-
-    if !output.status.success() {
-        if should_treat_rev_parse_failure_as_not_in_repository(current_dir, output.status.code()) {
-            return Ok(false);
+fn git_rev_parse_bool(git: &impl GitClient, current_dir: &Path, flag: &str) -> Result<bool, Error> {
+    match git.rev_parse_bool(current_dir, flag)? {
+        GitCommandResult::Success(value) => Ok(value),
+        GitCommandResult::Failure(failure) => {
+            if should_treat_rev_parse_failure_as_not_in_repository(current_dir, failure.status_code)
+            {
+                return Ok(false);
+            }
+            Err(Error::FailedToQueryGitRevParse {
+                flag: flag.to_string(),
+                stderr: failure.stderr,
+            })
         }
-        let stderr = stderr_or_status(&output.stderr, output.status.code());
-        return Err(Error::FailedToQueryGitRevParse {
-            flag: flag.to_string(),
-            stderr,
-        });
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
 }
 
-fn git_rev_parse_path(current_dir: &Path, flag: &str) -> Result<Option<PathBuf>, Error> {
-    let output = Command::new("git")
-        .current_dir(current_dir)
-        .arg("rev-parse")
-        .arg(flag)
-        .output()
-        .map_err(Error::FailedToExecuteGit)?;
-
-    if !output.status.success() {
-        if should_treat_rev_parse_failure_as_not_in_repository(current_dir, output.status.code()) {
-            return Ok(None);
+fn git_rev_parse_path(
+    git: &impl GitClient,
+    current_dir: &Path,
+    flag: &str,
+) -> Result<Option<PathBuf>, Error> {
+    match git.rev_parse_path_bytes(current_dir, flag)? {
+        GitCommandResult::Success(bytes) => git_path_bytes_to_optional_path(&bytes, flag),
+        GitCommandResult::Failure(failure) => {
+            if should_treat_rev_parse_failure_as_not_in_repository(current_dir, failure.status_code)
+            {
+                return Ok(None);
+            }
+            Err(Error::FailedToQueryGitRevParse {
+                flag: flag.to_string(),
+                stderr: failure.stderr,
+            })
         }
-        let stderr = stderr_or_status(&output.stderr, output.status.code());
-        return Err(Error::FailedToQueryGitRevParse {
-            flag: flag.to_string(),
-            stderr,
-        });
     }
+}
 
-    let trimmed = trim_git_output_path(&output.stdout);
+fn git_path_bytes_to_optional_path(bytes: &[u8], flag: &str) -> Result<Option<PathBuf>, Error> {
+    let trimmed = trim_git_output_path(bytes);
     if trimmed.is_empty() {
         return Ok(None);
     }
 
-    #[cfg(unix)]
-    {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
+    git_output_path_to_path_buf(trimmed, flag).map(Some)
+}
 
-        let value = OsString::from_vec(trimmed.to_vec());
-        Ok(Some(PathBuf::from(value)))
+trait GitClient {
+    fn rev_parse_bool(
+        &self,
+        current_dir: &Path,
+        flag: &str,
+    ) -> Result<GitCommandResult<bool>, Error>;
+
+    fn rev_parse_path_bytes(
+        &self,
+        current_dir: &Path,
+        flag: &str,
+    ) -> Result<GitCommandResult<Vec<u8>>, Error>;
+
+    fn git_path_bytes(
+        &self,
+        repository_root: &Path,
+        git_path: &str,
+    ) -> Result<GitCommandResult<Vec<u8>>, Error>;
+}
+
+struct RealGitClient;
+
+impl GitClient for RealGitClient {
+    fn rev_parse_bool(
+        &self,
+        current_dir: &Path,
+        flag: &str,
+    ) -> Result<GitCommandResult<bool>, Error> {
+        match run_git_command(git_rev_parse_command(current_dir, flag))? {
+            GitCommandResult::Success(stdout) => Ok(GitCommandResult::Success(
+                String::from_utf8_lossy(&stdout).trim() == "true",
+            )),
+            GitCommandResult::Failure(failure) => Ok(GitCommandResult::Failure(failure)),
+        }
     }
 
-    #[cfg(not(unix))]
-    {
-        let value =
-            String::from_utf8(trimmed.to_vec()).map_err(|_| Error::InvalidGitPathEncoding {
-                flag: flag.to_string(),
-            })?;
-        Ok(Some(PathBuf::from(value)))
+    fn rev_parse_path_bytes(
+        &self,
+        current_dir: &Path,
+        flag: &str,
+    ) -> Result<GitCommandResult<Vec<u8>>, Error> {
+        run_git_command(git_rev_parse_command(current_dir, flag))
+    }
+
+    fn git_path_bytes(
+        &self,
+        repository_root: &Path,
+        git_path: &str,
+    ) -> Result<GitCommandResult<Vec<u8>>, Error> {
+        let mut command = git_command_with_explicit_repo(repository_root);
+        command.arg("rev-parse").arg("--git-path").arg(git_path);
+        run_git_command(command)
+    }
+}
+
+fn git_rev_parse_command(current_dir: &Path, flag: &str) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(current_dir).arg("rev-parse").arg(flag);
+    command
+}
+
+fn run_git_command(mut command: Command) -> Result<GitCommandResult<Vec<u8>>, Error> {
+    let output = command.output().map_err(Error::FailedToExecuteGit)?;
+
+    if !output.status.success() {
+        return Ok(GitCommandResult::Failure(GitCommandFailure::from_output(
+            &output.stderr,
+            output.status,
+        )));
+    }
+
+    Ok(GitCommandResult::Success(output.stdout))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitCommandResult<T> {
+    Success(T),
+    Failure(GitCommandFailure),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitCommandFailure {
+    status_code: Option<i32>,
+    stderr: String,
+}
+
+impl GitCommandFailure {
+    fn from_output(stderr: &[u8], status: ExitStatus) -> Self {
+        Self {
+            status_code: status.code(),
+            stderr: stderr_or_status(stderr, status.code()),
+        }
     }
 }
 
@@ -277,27 +356,26 @@ pub fn ensure_in_repo_root() -> Result<(), Error> {
 /// Resolves a Git path (as interpreted by `git rev-parse --git-path`) from the
 /// given repository root.
 pub fn resolve_git_path(repository_root: &Path, git_path: &str) -> Result<PathBuf, Error> {
-    let output = git_command_with_explicit_repo(repository_root)
-        .arg("rev-parse")
-        .arg("--git-path")
-        .arg(git_path)
-        .output()
-        .map_err(Error::FailedToExecuteGit)?;
+    resolve_git_path_with_client(&RealGitClient, repository_root, git_path)
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(Error::FailedToResolveGitPath {
-            repository_root: repository_root.display().to_string(),
-            git_path: git_path.to_string(),
-            stderr: if stderr.is_empty() {
-                format!("git exited with status {}", output.status)
-            } else {
-                stderr
-            },
-        });
-    }
+fn resolve_git_path_with_client(
+    git: &impl GitClient,
+    repository_root: &Path,
+    git_path: &str,
+) -> Result<PathBuf, Error> {
+    let raw_path = match git.git_path_bytes(repository_root, git_path)? {
+        GitCommandResult::Success(bytes) => bytes,
+        GitCommandResult::Failure(failure) => {
+            return Err(Error::FailedToResolveGitPath {
+                repository_root: repository_root.display().to_string(),
+                git_path: git_path.to_string(),
+                stderr: failure.stderr,
+            });
+        }
+    };
 
-    let raw_path = trim_git_output_path(&output.stdout);
+    let raw_path = trim_git_output_path(&raw_path);
     if raw_path.is_empty() {
         return Err(Error::EmptyGitPath {
             repository_root: repository_root.display().to_string(),
@@ -357,8 +435,114 @@ pub fn resolve_hooks_path(repository_root: &Path) -> Result<PathBuf, Error> {
 mod tests {
     use super::*;
     use crate::test_support::process_state_lock;
-    use std::fs;
+    use std::{collections::HashMap, fs};
     use tempfile::TempDir;
+
+    #[test]
+    fn given_fake_git_client_when_finding_worktree_root_then_uses_typed_boundary() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_root = temp_dir.path().join("repo");
+        fs::create_dir(&repo_root).unwrap();
+        fs::create_dir(repo_root.join(".git")).unwrap();
+        let nested = repo_root.join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        let git = FakeGitClient::new()
+            .with_bool("--is-inside-work-tree", true)
+            .with_path("--show-toplevel", path_bytes(&repo_root))
+            .with_bool("--is-bare-repository", false);
+
+        let result = find_git_root_with_client(&git, &nested).unwrap();
+
+        assert_eq!(
+            normalize_path_for_compare(&result),
+            normalize_path_for_compare(&repo_root.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn given_fake_git_client_when_resolving_git_path_then_decoding_stays_in_repository_layer() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_root = temp_dir.path();
+        let git = FakeGitClient::new().with_git_path("hooks", b".githooks \n".to_vec());
+
+        let result = resolve_git_path_with_client(&git, repo_root, "hooks").unwrap();
+
+        assert_eq!(result, repo_root.join(".githooks "));
+    }
+
+    #[derive(Default)]
+    struct FakeGitClient {
+        bools: HashMap<String, GitCommandResult<bool>>,
+        paths: HashMap<String, GitCommandResult<Vec<u8>>>,
+        git_paths: HashMap<String, GitCommandResult<Vec<u8>>>,
+    }
+
+    impl FakeGitClient {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn with_bool(mut self, flag: &str, value: bool) -> Self {
+            self.bools
+                .insert(flag.to_string(), GitCommandResult::Success(value));
+            self
+        }
+
+        fn with_path(mut self, flag: &str, value: Vec<u8>) -> Self {
+            self.paths
+                .insert(flag.to_string(), GitCommandResult::Success(value));
+            self
+        }
+
+        fn with_git_path(mut self, git_path: &str, value: Vec<u8>) -> Self {
+            self.git_paths
+                .insert(git_path.to_string(), GitCommandResult::Success(value));
+            self
+        }
+    }
+
+    impl GitClient for FakeGitClient {
+        fn rev_parse_bool(
+            &self,
+            _current_dir: &Path,
+            flag: &str,
+        ) -> Result<GitCommandResult<bool>, Error> {
+            Ok(self
+                .bools
+                .get(flag)
+                .cloned()
+                .unwrap_or_else(|| panic!("unexpected bool rev-parse flag: {flag}")))
+        }
+
+        fn rev_parse_path_bytes(
+            &self,
+            _current_dir: &Path,
+            flag: &str,
+        ) -> Result<GitCommandResult<Vec<u8>>, Error> {
+            Ok(self
+                .paths
+                .get(flag)
+                .cloned()
+                .unwrap_or_else(|| panic!("unexpected path rev-parse flag: {flag}")))
+        }
+
+        fn git_path_bytes(
+            &self,
+            _repository_root: &Path,
+            git_path: &str,
+        ) -> Result<GitCommandResult<Vec<u8>>, Error> {
+            Ok(self
+                .git_paths
+                .get(git_path)
+                .cloned()
+                .unwrap_or_else(|| panic!("unexpected git path: {git_path}")))
+        }
+    }
+
+    fn path_bytes(path: &Path) -> Vec<u8> {
+        format!("{}\n", path.display()).into_bytes()
+    }
 
     #[test]
     fn given_current_dir_is_git_root_when_finding_root_then_returns_current_dir() {
