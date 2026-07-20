@@ -197,7 +197,11 @@ impl TryFrom<&str> for HookCommand {
     type Error = HookCommandError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::try_from(value.to_string())
+        if value.trim().is_empty() {
+            Err(HookCommandError)
+        } else {
+            Self::try_from(value.to_string())
+        }
     }
 }
 
