@@ -19,8 +19,6 @@ pub enum Error {
     ExecutionTerminatedBySignal,
     #[error("No hooks configured for lifecycle phase: {0}")]
     NoHooksConfigured(LifeCyclePhase),
-    #[error("No command defined")]
-    NoCommandDefined,
     #[error("Failed to spawn hook command '{command}' via '{shell}': {source}")]
     CommandSpawnFailed {
         command: String,
@@ -273,7 +271,7 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "run-pre-commit".into(),
+                command: "run-pre-commit".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -292,7 +290,7 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::CommitMsg,
             vec![crate::config::HookDefinition {
-                command: "check-commit-message".into(),
+                command: "check-commit-message".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -344,11 +342,11 @@ mod tests {
     fn given_summary_success_when_rendering_then_counts_phases_and_durations() {
         let hooks = vec![
             HookDefinition {
-                command: "seq-ok".into(),
+                command: "seq-ok".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel-ok".into(),
+                command: "parallel-ok".try_into().unwrap(),
                 parallel_execution_allowed: true,
             },
         ];
@@ -383,15 +381,15 @@ mod tests {
     fn given_summary_sequential_failure_when_rendering_then_reports_skipped_and_first_failure() {
         let hooks = vec![
             HookDefinition {
-                command: "seq-fail".into(),
+                command: "seq-fail".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "seq-skipped".into(),
+                command: "seq-skipped".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel-skipped".into(),
+                command: "parallel-skipped".try_into().unwrap(),
                 parallel_execution_allowed: true,
             },
         ];
@@ -456,7 +454,9 @@ mod tests {
     #[test]
     fn given_spawn_failure_when_rendering_summary_then_status_and_error_are_redacted() {
         let hooks = vec![HookDefinition {
-            command: "SECRET=value deploy --token super-secret-value".into(),
+            command: "SECRET=value deploy --token super-secret-value"
+                .try_into()
+                .unwrap(),
             parallel_execution_allowed: false,
         }];
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::SpawnError(
@@ -487,11 +487,11 @@ mod tests {
     fn given_stdin_payload_when_executing_then_each_command_receives_the_same_bytes() {
         let hooks = vec![
             HookDefinition {
-                command: "first".into(),
+                command: "first".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "second".into(),
+                command: "second".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
         ];
@@ -632,7 +632,7 @@ mod tests {
         hooks_map.insert(
             LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "hook command".into(),
+                command: "hook command".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -652,7 +652,7 @@ mod tests {
         )]);
 
         let result = execute_command(
-            &HookCommand::from("deploy --token super-secret-value"),
+            &HookCommand::try_from("deploy --token super-secret-value").unwrap(),
             &runner,
             &[],
             None,
@@ -679,7 +679,7 @@ mod tests {
         )]);
 
         let result = execute_command(
-            &HookCommand::from("TOKEN=super-secret API_KEY=123 deploy --arg value"),
+            &HookCommand::try_from("TOKEN=super-secret API_KEY=123 deploy --arg value").unwrap(),
             &runner,
             &[],
             None,
@@ -703,9 +703,10 @@ mod tests {
         )]);
 
         let result = execute_command(
-            &HookCommand::from(
+            &HookCommand::try_from(
                 "TOKEN=\"super secret\" API_KEY='another secret' ./deploy --arg value",
-            ),
+            )
+            .unwrap(),
             &runner,
             &[],
             None,
@@ -767,16 +768,14 @@ mod tests {
     }
 
     #[test]
-    fn given_empty_command_when_executing_then_no_command_defined_error() {
-        let runner = FakeRunner::with_default_outcomes(vec![]);
-        let result = execute_command(&HookCommand::from("   "), &runner, &[], None);
-        assert!(matches!(result, Err(Error::NoCommandDefined)));
-    }
-
-    #[test]
     fn given_missing_exit_code_when_executing_then_terminated_by_signal_error() {
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(None)]);
-        let result = execute_command(&HookCommand::from("run-hook"), &runner, &[], None);
+        let result = execute_command(
+            &HookCommand::try_from("run-hook").unwrap(),
+            &runner,
+            &[],
+            None,
+        );
         assert!(matches!(result, Err(Error::ExecutionTerminatedBySignal)));
     }
 
@@ -788,7 +787,7 @@ mod tests {
             ["parallel-1", "parallel-2", "parallel-3", "parallel-4"]
                 .iter()
                 .map(|command| HookDefinition {
-                    command: (*command).into(),
+                    command: (*command).try_into().unwrap(),
                     parallel_execution_allowed: true,
                 })
                 .collect(),
@@ -824,16 +823,16 @@ mod tests {
         let mut hook_definitions: Vec<HookDefinition> = ["parallel-1", "parallel-2", "parallel-3"]
             .iter()
             .map(|command| HookDefinition {
-                command: (*command).into(),
+                command: (*command).try_into().unwrap(),
                 parallel_execution_allowed: true,
             })
             .collect();
         hook_definitions.push(HookDefinition {
-            command: "sequential-1".into(),
+            command: "sequential-1".try_into().unwrap(),
             parallel_execution_allowed: false,
         });
         hook_definitions.push(HookDefinition {
-            command: "sequential-2".into(),
+            command: "sequential-2".try_into().unwrap(),
             parallel_execution_allowed: false,
         });
 
@@ -872,11 +871,11 @@ mod tests {
     fn given_failed_sequential_hook_when_executing_then_parallel_hooks_do_not_run() {
         let hooks = vec![
             HookDefinition {
-                command: "sequential".into(),
+                command: "sequential".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel".into(),
+                command: "parallel".try_into().unwrap(),
                 parallel_execution_allowed: true,
             },
         ];
@@ -896,15 +895,15 @@ mod tests {
         let barrier = Arc::new(Barrier::new(2));
         let hooks = vec![
             HookDefinition {
-                command: "sequential".into(),
+                command: "sequential".try_into().unwrap(),
                 parallel_execution_allowed: false,
             },
             HookDefinition {
-                command: "parallel-ok".into(),
+                command: "parallel-ok".try_into().unwrap(),
                 parallel_execution_allowed: true,
             },
             HookDefinition {
-                command: "parallel-fail".into(),
+                command: "parallel-fail".try_into().unwrap(),
                 parallel_execution_allowed: true,
             },
         ];

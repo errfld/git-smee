@@ -134,15 +134,14 @@ command = "   "
 
     let result = SmeeConfig::from_toml(&config_path);
 
-    assert!(matches!(
-        result,
-        Err(config::Error::ValidationError(
-            config::ValidationError::EmptyCommand {
-                hook_name,
-                entry_index
-            }
-        )) if hook_name == "pre-commit" && entry_index == 2
-    ));
+    match result {
+        Err(config::Error::ParseError(error)) => {
+            let message = error.to_string();
+            assert!(message.contains("pre-commit"));
+            assert!(message.contains("command must not be empty"));
+        }
+        _ => panic!("expected parse error for whitespace-only hook command"),
+    }
 }
 
 #[test]

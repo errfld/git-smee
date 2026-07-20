@@ -131,7 +131,7 @@ pub trait HookInstaller {
 /// hooks.insert(
 ///     LifeCyclePhase::PreCommit,
 ///     vec![HookDefinition {
-///         command: "echo pre-commit".into(),
+///         command: "echo pre-commit".try_into().unwrap(),
 ///         parallel_execution_allowed: false,
 ///     }],
 /// );
@@ -259,7 +259,7 @@ mod tests {
         hooks_map.insert(
             crate::config::LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-commit hook".into(),
+                command: "echo Pre-commit hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -293,14 +293,14 @@ mod tests {
         hooks_map.insert(
             crate::config::LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-commit hook".into(),
+                command: "echo Pre-commit hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
         hooks_map.insert(
             crate::config::LifeCyclePhase::PrePush,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-push hook".into(),
+                command: "echo Pre-push hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -338,21 +338,21 @@ mod tests {
         hooks_map.insert(
             crate::config::LifeCyclePhase::PrePush,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-push hook".into(),
+                command: "echo Pre-push hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
         hooks_map.insert(
             crate::config::LifeCyclePhase::ApplypatchMsg,
             vec![crate::config::HookDefinition {
-                command: "echo Applypatch hook".into(),
+                command: "echo Applypatch hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
         hooks_map.insert(
             crate::config::LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-commit hook".into(),
+                command: "echo Pre-commit hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -505,7 +505,7 @@ mod tests {
         hooks_map.insert(
             crate::config::LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-commit hook".into(),
+                command: "echo Pre-commit hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
@@ -533,7 +533,7 @@ mod tests {
         hooks_map.insert(
             crate::config::LifeCyclePhase::PreCommit,
             vec![crate::config::HookDefinition {
-                command: "echo Pre-commit hook".into(),
+                command: "echo Pre-commit hook".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );

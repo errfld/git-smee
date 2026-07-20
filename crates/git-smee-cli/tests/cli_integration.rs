@@ -759,7 +759,7 @@ fn given_directory_config_when_install_then_user_friendly_not_a_file_error() {
 }
 
 #[test]
-fn given_invalid_config_when_install_then_validation_error_is_reported() {
+fn given_invalid_config_when_install_then_parse_error_keeps_hook_and_entry_context() {
     let test_repo = common::TestRepo::default();
     test_repo.write_config(
         r#"
@@ -778,7 +778,7 @@ command = "   "
         .failure()
         .stderr(
             predicate::str::contains(
-                "Error: Hook 'pre-commit' entry #2: command must not be empty",
+                "Error: Failed to parse the configuration file: Hook 'pre-commit' entry #2: command must not be empty",
             )
             .and(predicate::str::contains("EmptyCommand").not()),
         );

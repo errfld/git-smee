@@ -729,7 +729,7 @@ fn pre_commit_only_config() -> SmeeConfig {
     hooks.insert(
         git_smee_core::config::LifeCyclePhase::PreCommit,
         vec![git_smee_core::config::HookDefinition {
-            command: "echo pre-commit".into(),
+            command: "echo pre-commit".try_into().unwrap(),
             parallel_execution_allowed: false,
         }],
     );

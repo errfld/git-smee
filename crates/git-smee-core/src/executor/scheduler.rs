@@ -142,9 +142,6 @@ pub(super) fn execute_command(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    if command.is_empty() {
-        return Err(Error::NoCommandDefined);
-    }
     let exit_code = runner
         .run(command, hook_args, stdin_payload)
         .map_err(|source| Error::CommandSpawnFailed {
