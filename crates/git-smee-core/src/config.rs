@@ -7,13 +7,60 @@ use std::{
     str::FromStr,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use thiserror::Error;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 pub struct SmeeConfig {
     #[serde(flatten)]
     pub hooks: HashMap<LifeCyclePhase, Vec<HookDefinition>>,
+}
+
+#[derive(Deserialize)]
+struct SmeeConfigWire {
+    #[serde(flatten)]
+    hooks: HashMap<LifeCyclePhase, Vec<HookDefinitionWire>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HookDefinitionWire {
+    command: String,
+    #[serde(default = "bool::default")]
+    parallel_execution_allowed: bool,
+}
+
+impl<'de> Deserialize<'de> for SmeeConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = SmeeConfigWire::deserialize(deserializer)?;
+        let hooks = wire
+            .hooks
+            .into_iter()
+            .map(|(phase, definitions)| {
+                let definitions = definitions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, definition)| {
+                        let command = HookCommand::try_from(definition.command).map_err(|_| {
+                            de::Error::custom(ValidationError::EmptyCommand {
+                                hook_name: phase.to_string(),
+                                entry_index: index + 1,
+                            })
+                        })?;
+                        Ok(HookDefinition {
+                            command,
+                            parallel_execution_allowed: definition.parallel_execution_allowed,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, D::Error>>()?;
+                Ok((phase, definitions))
+            })
+            .collect::<Result<HashMap<_, _>, D::Error>>()?;
+        Ok(Self { hooks })
+    }
 }
 
 impl SmeeConfig {
@@ -73,15 +120,6 @@ impl SmeeConfig {
                     hook_name: phase.to_string(),
                 });
             }
-
-            for (index, hook_definition) in hooks.iter().enumerate() {
-                if hook_definition.command.is_empty() {
-                    return Err(ValidationError::EmptyCommand {
-                        hook_name: phase.to_string(),
-                        entry_index: index + 1,
-                    });
-                }
-            }
         }
 
         Ok(())
@@ -94,7 +132,8 @@ impl Default for SmeeConfig {
         hash_map.insert(
             LifeCyclePhase::PreCommit,
             vec![HookDefinition {
-                command: "echo 'Default pre-commit hook'".into(),
+                command: HookCommand::try_from("echo 'Default pre-commit hook'")
+                    .expect("default hook command should be valid"),
                 parallel_execution_allowed: false,
             }],
         );
@@ -126,17 +165,15 @@ pub struct HookDefinition {
     pub parallel_execution_allowed: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// A validated, non-empty shell command configured for a Git hook.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct HookCommand(String);
 
 impl HookCommand {
+    /// Returns the exact configured shell source without trimming or normalization.
     pub fn as_shell_source(&self) -> &str {
         &self.0
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.trim().is_empty()
     }
 
     pub(crate) fn redacted(&self) -> String {
@@ -144,17 +181,44 @@ impl HookCommand {
     }
 }
 
-impl From<String> for HookCommand {
-    fn from(value: String) -> Self {
-        Self(value)
+impl TryFrom<String> for HookCommand {
+    type Error = HookCommandError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.trim().is_empty() {
+            Err(HookCommandError)
+        } else {
+            Ok(Self(value))
+        }
     }
 }
 
-impl From<&str> for HookCommand {
-    fn from(value: &str) -> Self {
-        Self(value.to_string())
+impl TryFrom<&str> for HookCommand {
+    type Error = HookCommandError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        if value.trim().is_empty() {
+            Err(HookCommandError)
+        } else {
+            Self::try_from(value.to_string())
+        }
     }
 }
+
+impl<'de> Deserialize<'de> for HookCommand {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let source = String::deserialize(deserializer)?;
+        Self::try_from(source).map_err(de::Error::custom)
+    }
+}
+
+/// Returned when a hook command contains only whitespace or no characters.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("command must not be empty")]
+pub struct HookCommandError;
 
 impl PartialEq<&str> for HookCommand {
     fn eq(&self, other: &&str) -> bool {
@@ -466,7 +530,7 @@ mod tests {
     #[test]
     fn given_hook_command_when_inspecting_then_shell_source_and_redacted_display_are_owned_by_type()
     {
-        let command = HookCommand::from("TOKEN=super-secret deploy --token hidden");
+        let command = HookCommand::try_from("TOKEN=super-secret deploy --token hidden").unwrap();
 
         assert_eq!(
             command.as_shell_source(),
@@ -476,38 +540,49 @@ mod tests {
     }
 
     #[test]
-    fn given_whitespace_hook_command_when_checking_empty_then_command_type_rejects_it() {
-        let command = HookCommand::from("   ");
-
-        assert!(command.is_empty());
+    fn given_empty_or_whitespace_hook_command_when_constructing_then_command_type_rejects_it() {
+        assert!(HookCommand::try_from("").is_err());
+        assert!(HookCommand::try_from("   \t\n").is_err());
+        assert!(HookCommand::try_from(String::new()).is_err());
     }
 
     #[test]
-    fn given_empty_command_when_validating_then_error_contains_hook_and_entry() {
-        let mut hooks = HashMap::new();
-        hooks.insert(
-            LifeCyclePhase::PreCommit,
-            vec![
-                HookDefinition {
-                    command: "cargo test".into(),
-                    parallel_execution_allowed: false,
-                },
-                HookDefinition {
-                    command: "   ".into(),
-                    parallel_execution_allowed: false,
-                },
-            ],
-        );
-        let config = SmeeConfig { hooks };
+    fn given_padded_non_empty_hook_command_when_constructing_then_exact_shell_source_is_preserved()
+    {
+        let command = HookCommand::try_from("  echo preserved  ").unwrap();
 
-        let result = config.validate();
+        assert_eq!(command.as_shell_source(), "  echo preserved  ");
+    }
+
+    #[test]
+    fn given_empty_or_whitespace_hook_command_when_deserializing_then_it_is_rejected() {
+        for source in ["", "   \t"] {
+            let config = format!(
+                r#"
+            [[pre-commit]]
+            command = "{source}"
+            "#
+            );
+
+            assert!(toml::from_str::<SmeeConfig>(&config).is_err());
+        }
+    }
+
+    #[test]
+    fn given_padded_hook_command_when_deserializing_then_exact_shell_source_is_preserved() {
+        let config = toml::from_str::<SmeeConfig>(
+            r#"
+            [[pre-commit]]
+            command = "  echo preserved  "
+            "#,
+        )
+        .unwrap();
 
         assert_eq!(
-            result,
-            Err(ValidationError::EmptyCommand {
-                hook_name: "pre-commit".to_string(),
-                entry_index: 2,
-            })
+            config.hooks[&LifeCyclePhase::PreCommit][0]
+                .command
+                .as_shell_source(),
+            "  echo preserved  "
         );
     }
 
@@ -533,7 +608,7 @@ mod tests {
         hooks.insert(
             LifeCyclePhase::PreCommit,
             vec![HookDefinition {
-                command: "cargo test".into(),
+                command: "cargo test".try_into().unwrap(),
                 parallel_execution_allowed: false,
             }],
         );
