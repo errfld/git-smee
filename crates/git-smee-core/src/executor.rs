@@ -104,7 +104,7 @@ fn execute_hook_with_runner<R: CommandRunner>(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    match smee_config.hooks.get(&phase) {
+    match smee_config.hooks_for(phase) {
         None => Err(Error::NoHooksConfigured(phase)),
         Some(hooks) => run_hooks_with_runner(hooks, runner, hook_args, stdin_payload),
     }
@@ -117,7 +117,7 @@ fn execute_hook_with_runner_and_summary<R: CommandRunner>(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<HookRunSummary, Error> {
-    match smee_config.hooks.get(&phase) {
+    match smee_config.hooks_for(phase) {
         None => Err(Error::NoHooksConfigured(phase)),
         Some(hooks) => Ok(run_hooks_with_runner_with_summary(
             hooks,
@@ -254,9 +254,7 @@ mod tests {
 
     #[test]
     fn given_empty_smee_config_when_executing_hook_then_no_hooks_configured_error() {
-        let config = SmeeConfig {
-            hooks: std::collections::HashMap::new(),
-        };
+        let config = SmeeConfig::try_new(std::collections::HashMap::new()).unwrap();
 
         let result = execute_hook(&config, LifeCyclePhase::PreCommit);
         assert!(matches!(
@@ -275,7 +273,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(0))]);
 
         let result =
@@ -294,7 +292,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(0))]);
         let hook_args = vec!["COMMIT_EDITMSG".to_string(), "message".to_string()];
 
@@ -636,7 +634,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let runner = FakeRunner::with_default_outcomes(vec![PlannedResult::Exit(Some(127))]);
 
         let result =
@@ -792,7 +790,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let runner = FakeRunner::with_command_outcomes(vec![
             ("parallel-1", vec![PlannedResult::Exit(Some(0))]),
             ("parallel-2", vec![PlannedResult::Exit(Some(0))]),
@@ -837,7 +835,7 @@ mod tests {
         });
 
         hooks_map.insert(LifeCyclePhase::PreCommit, hook_definitions);
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let runner = FakeRunner::with_command_outcomes(vec![
             ("sequential-1", vec![PlannedResult::Exit(Some(0))]),
             ("sequential-2", vec![PlannedResult::Exit(Some(0))]),

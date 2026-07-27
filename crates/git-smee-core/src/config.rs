@@ -13,7 +13,7 @@ use thiserror::Error;
 #[derive(Serialize)]
 pub struct SmeeConfig {
     #[serde(flatten)]
-    pub hooks: HashMap<LifeCyclePhase, Vec<HookDefinition>>,
+    hooks: HashMap<LifeCyclePhase, Vec<HookDefinition>>,
 }
 
 #[derive(Deserialize)]
@@ -59,11 +59,46 @@ impl<'de> Deserialize<'de> for SmeeConfig {
                 Ok((phase, definitions))
             })
             .collect::<Result<HashMap<_, _>, D::Error>>()?;
-        Ok(Self { hooks })
+        Self::try_new(hooks).map_err(de::Error::custom)
     }
 }
 
 impl SmeeConfig {
+    /// Constructs a configuration while enforcing that configured phases are non-empty.
+    pub fn try_new(
+        hooks: HashMap<LifeCyclePhase, Vec<HookDefinition>>,
+    ) -> Result<Self, ValidationError> {
+        for (phase, definitions) in &hooks {
+            if definitions.is_empty() {
+                return Err(ValidationError::EmptyHookEntries {
+                    hook_name: phase.to_string(),
+                });
+            }
+        }
+
+        Ok(Self { hooks })
+    }
+
+    /// Returns the configured hooks for a lifecycle phase, if that phase is configured.
+    pub fn hooks_for(&self, phase: LifeCyclePhase) -> Option<&[HookDefinition]> {
+        self.hooks.get(&phase).map(Vec::as_slice)
+    }
+
+    /// Iterates over configured lifecycle phases.
+    pub fn phases(&self) -> impl Iterator<Item = LifeCyclePhase> + '_ {
+        self.hooks.keys().copied()
+    }
+
+    /// Returns the number of configured lifecycle phases.
+    pub fn phase_count(&self) -> usize {
+        self.hooks.len()
+    }
+
+    /// Returns whether no lifecycle phase is configured.
+    pub fn is_empty(&self) -> bool {
+        self.hooks.is_empty()
+    }
+
     /// Load configuration from a TOML file.
     ///
     /// Reads and parses the `.smee.toml` configuration file at the given path.
@@ -93,7 +128,7 @@ impl SmeeConfig {
     /// fs::write(&config_path, toml_content).unwrap();
     ///
     /// let config = SmeeConfig::from_toml(&config_path).unwrap();
-    /// assert!(config.hooks.contains_key(&LifeCyclePhase::PreCommit));
+    /// assert!(config.hooks_for(LifeCyclePhase::PreCommit).is_some());
     /// ```
     ///
     pub fn from_toml(path: &Path) -> Result<Self, Error> {
@@ -108,21 +143,7 @@ impl SmeeConfig {
             return Err(Error::NotATomlFileExtension);
         }
         let data = fs::read(path).map_err(Error::ReadError)?;
-        let config: SmeeConfig = toml::from_slice(&data).map_err(Error::ParseError)?;
-        config.validate()?;
-        Ok(config)
-    }
-
-    pub fn validate(&self) -> Result<(), ValidationError> {
-        for (phase, hooks) in &self.hooks {
-            if hooks.is_empty() {
-                return Err(ValidationError::EmptyHookEntries {
-                    hook_name: phase.to_string(),
-                });
-            }
-        }
-
-        Ok(())
+        toml::from_slice(&data).map_err(Error::ParseError)
     }
 }
 
@@ -137,7 +158,7 @@ impl Default for SmeeConfig {
                 parallel_execution_allowed: false,
             }],
         );
-        Self { hooks: hash_map }
+        Self::try_new(hash_map).expect("default hook definitions should be non-empty")
     }
 }
 
@@ -390,14 +411,21 @@ mod tests {
     #[test]
     fn test_create_from_toml() {
         let config: SmeeConfig = toml::from_str(EXAMPLE_TOML).unwrap();
-        assert_eq!(config.hooks.len(), 1);
-        assert_eq!(config.hooks[&LifeCyclePhase::PreCommit].len(), 2);
-        let hook_definition = config.hooks[&LifeCyclePhase::PreCommit]
+        assert_eq!(config.phase_count(), 1);
+        assert_eq!(
+            config.hooks_for(LifeCyclePhase::PreCommit).unwrap().len(),
+            2
+        );
+        let hook_definition = config
+            .hooks_for(LifeCyclePhase::PreCommit)
+            .unwrap()
             .first()
             .expect("Hook definition should be present");
         assert_eq!(hook_definition.command, "cargo build");
         assert!(!hook_definition.parallel_execution_allowed);
-        let hook_definition = config.hooks[&LifeCyclePhase::PreCommit]
+        let hook_definition = config
+            .hooks_for(LifeCyclePhase::PreCommit)
+            .unwrap()
             .get(1)
             .expect("Second Hook Definition should be present");
         assert_eq!(hook_definition.command, "cargo test");
@@ -474,7 +502,7 @@ mod tests {
     #[test]
     fn given_default_config_when_try_into_string_then_string() {
         let config = SmeeConfig::default();
-        assert_eq!(config.hooks.len(), 1);
+        assert_eq!(config.phase_count(), 1);
 
         //when
         let serialized_config: String = (&config).try_into().unwrap();
@@ -579,7 +607,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            config.hooks[&LifeCyclePhase::PreCommit][0]
+            config.hooks_for(LifeCyclePhase::PreCommit).unwrap()[0]
                 .command
                 .as_shell_source(),
             "  echo preserved  "
@@ -587,23 +615,20 @@ mod tests {
     }
 
     #[test]
-    fn given_hook_without_entries_when_validating_then_error_contains_hook() {
+    fn given_hook_without_entries_when_constructing_then_error_contains_hook() {
         let mut hooks = HashMap::new();
         hooks.insert(LifeCyclePhase::PrePush, vec![]);
-        let config = SmeeConfig { hooks };
 
-        let result = config.validate();
+        let result = SmeeConfig::try_new(hooks);
 
-        assert_eq!(
+        assert!(matches!(
             result,
-            Err(ValidationError::EmptyHookEntries {
-                hook_name: "pre-push".to_string(),
-            })
-        );
+            Err(ValidationError::EmptyHookEntries { hook_name }) if hook_name == "pre-push"
+        ));
     }
 
     #[test]
-    fn given_valid_config_when_validating_then_success() {
+    fn given_valid_config_when_constructing_then_success() {
         let mut hooks = HashMap::new();
         hooks.insert(
             LifeCyclePhase::PreCommit,
@@ -612,8 +637,6 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks };
-
-        assert!(config.validate().is_ok());
+        assert!(SmeeConfig::try_new(hooks).is_ok());
     }
 }

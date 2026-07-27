@@ -77,14 +77,14 @@ fn build_status_report(config_path: &Path) -> Result<StatusReport, Box<dyn std::
     let expected_hook_script =
         ExpectedHookScript::from_current_process(config_path, &repository_root);
 
-    let mut phases: Vec<_> = config.hooks.keys().copied().collect();
+    let mut phases: Vec<_> = config.phases().collect();
     phases.sort_by_key(|phase| phase.as_str());
 
     let mut hooks = Vec::new();
     let mut next_actions = Vec::new();
     for phase in &phases {
         let inspection = inspect_hook(&repository_root, &hooks_dir, *phase);
-        let configured_command_count = config.hooks.get(phase).map_or(0, Vec::len);
+        let configured_command_count = config.hooks_for(*phase).map_or(0, <[_]>::len);
         let mut stale_reasons = Vec::new();
         let (state, next_action) = match inspection.state() {
             HookInspectionState::Missing => (

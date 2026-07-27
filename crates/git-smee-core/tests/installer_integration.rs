@@ -733,7 +733,7 @@ fn pre_commit_only_config() -> SmeeConfig {
             parallel_execution_allowed: false,
         }],
     );
-    SmeeConfig { hooks }
+    SmeeConfig::try_new(hooks).unwrap()
 }
 
 fn read_config_from_repo(repo: &Path) -> SmeeConfig {

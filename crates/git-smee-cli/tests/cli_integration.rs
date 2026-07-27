@@ -117,8 +117,8 @@ fn given_unmanaged_hooks_when_migrate_hooks_then_prints_parseable_toml_suggestio
     let suggested_config = test_repo.path.join("suggested.git-smee.toml");
     fs::write(&suggested_config, output).unwrap();
     let parsed = git_smee_core::SmeeConfig::from_toml(&suggested_config).unwrap();
-    assert!(parsed.hooks.contains_key(&LifeCyclePhase::PreCommit));
-    assert!(parsed.hooks.contains_key(&LifeCyclePhase::CommitMsg));
+    assert!(parsed.hooks_for(LifeCyclePhase::PreCommit).is_some());
+    assert!(parsed.hooks_for(LifeCyclePhase::CommitMsg).is_some());
 }
 
 #[test]

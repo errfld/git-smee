@@ -135,7 +135,7 @@ pub trait HookInstaller {
 ///         parallel_execution_allowed: false,
 ///     }],
 /// );
-/// let config = SmeeConfig { hooks };
+/// let config = SmeeConfig::try_new(hooks).unwrap();
 ///
 /// let installer = FileSystemHookInstaller::from_path(temp_dir.path().to_path_buf()).unwrap();
 /// install_hooks(&config, &installer).unwrap();
@@ -155,11 +155,11 @@ pub fn install_hooks_with_options<T: HookInstaller>(
     hook_installer: &T,
     options: &HookScriptOptions,
 ) -> Result<(), Error> {
-    if config.hooks.is_empty() {
+    if config.is_empty() {
         return Err(Error::NoHooksPresent);
     }
     let platform = Platform::current();
-    let mut phases: Vec<_> = config.hooks.keys().copied().collect();
+    let mut phases: Vec<_> = config.phases().collect();
     phases.sort_by_key(|phase| phase.as_str());
     let active_hook_names: Vec<_> = phases.iter().map(|phase| phase.to_string()).collect();
     hook_installer.prepare_install_hooks(&active_hook_names)?;
@@ -239,9 +239,7 @@ mod tests {
 
     #[test]
     fn given_empty_smee_config_when_installing_hooks_then_no_hooks_present_error() {
-        let config = SmeeConfig {
-            hooks: std::collections::HashMap::new(),
-        };
+        let config = SmeeConfig::try_new(std::collections::HashMap::new()).unwrap();
 
         let installer = AssertingHookInstaller::new(|_, _| panic!("No hooks should be installed"));
 
@@ -263,7 +261,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let options = HookScriptOptions::new(
             PathBuf::from("/tmp/git-smee-bin"),
             PathBuf::from("/tmp/custom-config.toml"),
@@ -304,7 +302,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let options = HookScriptOptions::new(
             PathBuf::from("/tmp/git-smee-bin"),
             PathBuf::from("/tmp/custom-config.toml"),
@@ -356,7 +354,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let options = HookScriptOptions::new(
             PathBuf::from("/tmp/git-smee-bin"),
             PathBuf::from("/tmp/custom-config.toml"),
@@ -509,7 +507,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let options = HookScriptOptions::new(
             PathBuf::from("/tmp/it's 100% ready/git-smee"),
             PathBuf::from("/tmp/configs/it's 100% ready.toml"),
@@ -537,7 +535,7 @@ mod tests {
                 parallel_execution_allowed: false,
             }],
         );
-        let config = SmeeConfig { hooks: hooks_map };
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
         let options = HookScriptOptions::new(
             PathBuf::from(r#"C:\Program Files\100%"quoted"\git-smee.exe"#),
             PathBuf::from(r#"C:\repo\configs\it's 100% "ready".toml"#),
