@@ -1,10 +1,79 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::{fs, io::Write};
 
 use git_smee_core::{
     SmeeConfig,
-    config::{self, LifeCyclePhase},
+    config::{self, HookDefinition, LifeCyclePhase, ValidationError},
 };
+
+fn hook(command: &str) -> HookDefinition {
+    HookDefinition {
+        command: command.try_into().unwrap(),
+        parallel_execution_allowed: false,
+    }
+}
+
+#[test]
+fn given_empty_phase_when_constructing_config_then_phase_is_rejected() {
+    let hooks = HashMap::from([(LifeCyclePhase::PrePush, Vec::new())]);
+
+    let result = SmeeConfig::try_new(hooks);
+
+    assert!(matches!(
+        result,
+        Err(ValidationError::EmptyHookEntries { hook_name }) if hook_name == "pre-push"
+    ));
+}
+
+#[test]
+fn given_explicitly_empty_phase_when_deserializing_then_actionable_error_is_returned() {
+    let error = toml::from_str::<SmeeConfig>("pre-push = []")
+        .err()
+        .expect("empty phase should not deserialize");
+
+    let message = error.to_string();
+    assert!(message.contains("pre-push"));
+    assert!(message.contains("has no entries"));
+}
+
+#[test]
+fn given_valid_multi_phase_config_when_round_tripping_then_shape_and_source_are_preserved() {
+    let hooks = HashMap::from([
+        (LifeCyclePhase::PreCommit, vec![hook("  cargo test  ")]),
+        (LifeCyclePhase::PrePush, vec![hook("cargo fmt --check")]),
+    ]);
+    let config = SmeeConfig::try_new(hooks).unwrap();
+
+    let serialized: String = (&config).try_into().unwrap();
+    let reparsed: SmeeConfig = toml::from_str(&serialized).unwrap();
+
+    assert_eq!(
+        reparsed.hooks_for(LifeCyclePhase::PreCommit).unwrap()[0]
+            .command
+            .as_shell_source(),
+        "  cargo test  "
+    );
+    assert_eq!(
+        reparsed.hooks_for(LifeCyclePhase::PrePush).unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn given_valid_config_when_looking_up_phases_then_missing_and_configured_are_distinct() {
+    let config = SmeeConfig::try_new(HashMap::from([(
+        LifeCyclePhase::PreCommit,
+        vec![hook("cargo test")],
+    )]))
+    .unwrap();
+
+    assert_eq!(
+        config.hooks_for(LifeCyclePhase::PreCommit).unwrap().len(),
+        1
+    );
+    assert!(config.hooks_for(LifeCyclePhase::PrePush).is_none());
+}
 
 #[test]
 fn given_simple_toml_when_reading_then_succeed() {
@@ -12,14 +81,12 @@ fn given_simple_toml_when_reading_then_succeed() {
     let config = SmeeConfig::from_toml(&path).expect("Should load successfully");
 
     let pre_commit_hooks = config
-        .hooks
-        .get(&LifeCyclePhase::PreCommit)
+        .hooks_for(LifeCyclePhase::PreCommit)
         .expect("pre-commit hooks should be present");
     assert_eq!(pre_commit_hooks.len(), 2);
 
     let pre_push_hooks = config
-        .hooks
-        .get(&LifeCyclePhase::PrePush)
+        .hooks_for(LifeCyclePhase::PrePush)
         .expect("pre-push hooks should be present");
     assert_eq!(pre_push_hooks.len(), 1);
 }
@@ -195,8 +262,8 @@ command = "echo post-receive"
 
     let config = SmeeConfig::from_toml(&config_path).expect("expected config to parse");
 
-    assert!(config.hooks.contains_key(&LifeCyclePhase::PreReceive));
-    assert!(config.hooks.contains_key(&LifeCyclePhase::Update));
-    assert!(config.hooks.contains_key(&LifeCyclePhase::ProcReceive));
-    assert!(config.hooks.contains_key(&LifeCyclePhase::PostReceive));
+    assert!(config.hooks_for(LifeCyclePhase::PreReceive).is_some());
+    assert!(config.hooks_for(LifeCyclePhase::Update).is_some());
+    assert!(config.hooks_for(LifeCyclePhase::ProcReceive).is_some());
+    assert!(config.hooks_for(LifeCyclePhase::PostReceive).is_some());
 }

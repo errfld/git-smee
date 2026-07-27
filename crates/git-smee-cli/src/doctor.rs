@@ -102,7 +102,7 @@ fn build_doctor_report(config_path: &Path) -> DoctorReport {
             report
                 .ok
                 .push(format!("config parses from {}", config_path.display()));
-            if config.hooks.is_empty() {
+            if config.is_empty() {
                 report.errors.push(
                     "configuration contains no hooks; add at least one [[hook-name]] entry"
                         .to_string(),
@@ -110,7 +110,7 @@ fn build_doctor_report(config_path: &Path) -> DoctorReport {
             } else {
                 report.ok.push(format!(
                     "{} configured hook phase(s) are valid",
-                    config.hooks.len()
+                    config.phase_count()
                 ));
             }
             config
@@ -127,7 +127,7 @@ fn build_doctor_report(config_path: &Path) -> DoctorReport {
     let expected_hook_script =
         ExpectedHookScript::from_current_process(config_path, &repository_root);
 
-    let mut phases: Vec<_> = config.hooks.keys().copied().collect();
+    let mut phases: Vec<_> = config.phases().collect();
     phases.sort_by_key(|phase| phase.as_str());
     for phase in phases {
         let inspection = inspect_hook(&repository_root, &hooks_dir, phase);
