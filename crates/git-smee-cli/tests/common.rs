@@ -8,6 +8,8 @@ pub struct TestRepo {
     pub path: TempDir,
 }
 
+// Each integration target compiles this shared fixture independently and may use only a subset.
+#[allow(dead_code)]
 impl TestRepo {
     pub fn new() -> Self {
         let path = TempDir::new().expect("Failed to create temp dir");
