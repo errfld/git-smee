@@ -1,14 +1,13 @@
 use std::{
     env,
     io::{self, ErrorKind, Write},
-    process::Stdio,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
     thread,
 };
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-#[cfg(windows)]
-use std::path::PathBuf;
 
 use crate::{config::HookCommand, platform::Platform};
 
@@ -24,6 +23,13 @@ pub(super) trait CommandRunner: Sync {
 
 pub(super) struct PlatformCommandRunner<'a> {
     pub(super) platform: &'a Platform,
+    pub(super) working_directory: WorkingDirectory<'a>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum WorkingDirectory<'a> {
+    Inherited,
+    Explicit(&'a Path),
 }
 
 impl CommandRunner for PlatformCommandRunner<'_> {
@@ -55,11 +61,7 @@ impl CommandRunner for PlatformCommandRunner<'_> {
         if stdin_payload.is_some() {
             shell_command.stdin(Stdio::piped());
         }
-
-        #[cfg(windows)]
-        if let Some(current_dir) = cmd_compatible_current_dir()? {
-            shell_command.current_dir(current_dir);
-        }
+        apply_working_directory(&mut shell_command, self.working_directory)?;
 
         let mut child = shell_command.spawn()?;
         if let Some(stdin_payload) = stdin_payload {
@@ -90,6 +92,43 @@ impl CommandRunner for PlatformCommandRunner<'_> {
     fn shell_display(&self) -> &'static str {
         self.platform.shell_display()
     }
+}
+
+fn apply_working_directory(
+    shell_command: &mut Command,
+    working_directory: WorkingDirectory<'_>,
+) -> io::Result<()> {
+    match working_directory {
+        WorkingDirectory::Explicit(path) => {
+            shell_command.current_dir(command_working_directory(path));
+        }
+        WorkingDirectory::Inherited => {
+            if let Some(current_dir) = inherited_compatible_working_directory()? {
+                shell_command.current_dir(current_dir);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn command_working_directory(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
+#[cfg(windows)]
+fn command_working_directory(path: &Path) -> PathBuf {
+    cmd_compatible_path(path)
+}
+
+#[cfg(not(windows))]
+fn inherited_compatible_working_directory() -> io::Result<Option<PathBuf>> {
+    Ok(None)
+}
+
+#[cfg(windows)]
+fn inherited_compatible_working_directory() -> io::Result<Option<PathBuf>> {
+    cmd_compatible_current_dir()
 }
 
 pub(super) fn create_windows_command_script(
@@ -165,8 +204,22 @@ pub(super) fn apply_hook_arg_env(shell_command: &mut std::process::Command, hook
 #[cfg(windows)]
 pub(super) fn cmd_compatible_current_dir() -> Result<Option<PathBuf>, std::io::Error> {
     let current_dir = env::current_dir()?;
-    let current_dir = current_dir.to_string_lossy();
-    Ok(current_dir.strip_prefix(r"\\?\").map(PathBuf::from))
+    let compatible = cmd_compatible_path(&current_dir);
+    Ok((compatible != current_dir).then_some(compatible))
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn cmd_compatible_path(path: &Path) -> PathBuf {
+    let path = path.to_string_lossy();
+    const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
+    if path
+        .get(..VERBATIM_UNC_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(VERBATIM_UNC_PREFIX))
+    {
+        return PathBuf::from(format!(r"\\{}", &path[VERBATIM_UNC_PREFIX.len()..]));
+    }
+    path.strip_prefix(r"\\?\")
+        .map_or_else(|| PathBuf::from(path.as_ref()), PathBuf::from)
 }
 
 pub(super) fn is_hook_arg_env_key(key: &str) -> bool {

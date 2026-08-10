@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use thiserror::Error;
 
 pub(crate) mod redaction;
@@ -7,7 +9,7 @@ mod summary;
 
 use crate::{SmeeConfig, config::LifeCyclePhase, platform::Platform};
 
-use runner::{CommandRunner, PlatformCommandRunner};
+use runner::{CommandRunner, PlatformCommandRunner, WorkingDirectory};
 use scheduler::{run_hooks_with_runner, run_hooks_with_runner_with_summary};
 pub use summary::{CommandPhase, CommandRun, HookRunSummary};
 
@@ -63,6 +65,24 @@ pub fn execute_hook_with_summary(
     let platform = Platform::current();
     let runner = PlatformCommandRunner {
         platform: &platform,
+        working_directory: WorkingDirectory::Inherited,
+    };
+    execute_hook_with_runner_and_summary(smee_config, phase, &runner, hook_args, stdin_payload)
+}
+
+/// Executes a hook and captures its summary with every child command rooted at
+/// `working_directory`.
+pub fn execute_hook_with_summary_in_directory(
+    smee_config: &SmeeConfig,
+    phase: LifeCyclePhase,
+    working_directory: &Path,
+    hook_args: &[String],
+    stdin_payload: Option<&[u8]>,
+) -> Result<HookRunSummary, Error> {
+    let platform = Platform::current();
+    let runner = PlatformCommandRunner {
+        platform: &platform,
+        working_directory: WorkingDirectory::Explicit(working_directory),
     };
     execute_hook_with_runner_and_summary(smee_config, phase, &runner, hook_args, stdin_payload)
 }
@@ -93,6 +113,7 @@ pub fn execute_hook_with_platform_and_args_and_stdin(
 ) -> Result<(), Error> {
     let runner = PlatformCommandRunner {
         platform: &platform,
+        working_directory: WorkingDirectory::Inherited,
     };
     execute_hook_with_runner(smee_config, phase, &runner, hook_args, stdin_payload)
 }
@@ -134,7 +155,8 @@ mod tests {
         collections::{HashMap, VecDeque},
         env,
         ffi::OsString,
-        io,
+        fs, io,
+        path::{Path, PathBuf},
         process::Command,
         sync::{Arc, Barrier, Mutex},
         time::Duration,
@@ -150,7 +172,8 @@ mod tests {
 
     use super::redaction::redact_command;
     use super::runner::{
-        apply_hook_arg_env, is_hook_arg_env_key, windows_cmd_quote_hook_arg, windows_command_script,
+        apply_hook_arg_env, cmd_compatible_path, is_hook_arg_env_key, windows_cmd_quote_hook_arg,
+        windows_command_script,
     };
     use super::scheduler::execute_command;
     use super::summary::{CommandOutcome, CommandRun};
@@ -283,6 +306,42 @@ mod tests {
     }
 
     #[test]
+    fn given_explicit_working_directory_when_executing_then_child_uses_it() {
+        let working_directory = tempfile::tempdir().unwrap();
+        let command = if cfg!(windows) {
+            "echo hook-cwd> hook-cwd.txt"
+        } else {
+            "printf 'hook-cwd\\n' > hook-cwd.txt"
+        };
+        let mut hooks_map = HashMap::new();
+        hooks_map.insert(
+            LifeCyclePhase::PreCommit,
+            vec![HookDefinition {
+                command: command.try_into().unwrap(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
+
+        let summary = execute_hook_with_summary_in_directory(
+            &config,
+            LifeCyclePhase::PreCommit,
+            working_directory.path(),
+            &[],
+            None,
+        )
+        .unwrap();
+
+        assert!(summary.error().is_none());
+        assert_eq!(
+            fs::read_to_string(working_directory.path().join("hook-cwd.txt"))
+                .unwrap()
+                .trim(),
+            "hook-cwd"
+        );
+    }
+
+    #[test]
     fn given_hook_args_when_executing_then_all_commands_receive_forwarded_args() {
         let mut hooks_map = std::collections::HashMap::new();
         hooks_map.insert(
@@ -314,6 +373,22 @@ mod tests {
         let script = windows_command_script("if \"%1\"==\"alpha\" exit /b 0");
 
         assert_eq!(script, "@echo off\r\nif \"%1\"==\"alpha\" exit /b 0\r\n");
+    }
+
+    #[test]
+    fn given_windows_verbatim_drive_path_when_normalizing_then_prefix_is_removed() {
+        assert_eq!(
+            cmd_compatible_path(Path::new(r"\\?\C:\repo")),
+            PathBuf::from(r"C:\repo")
+        );
+    }
+
+    #[test]
+    fn given_windows_verbatim_unc_path_when_normalizing_then_absolute_unc_is_preserved() {
+        assert_eq!(
+            cmd_compatible_path(Path::new(r"\\?\UNC\server\share\repo")),
+            PathBuf::from(r"\\server\share\repo")
+        );
     }
 
     #[test]
