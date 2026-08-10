@@ -142,11 +142,12 @@ mod tests {
         let original_dir = env::current_dir().unwrap();
         let _current_dir_guard = CurrentDirGuard(original_dir);
         env::set_current_dir(&nested).unwrap();
+        let invocation_dir = env::current_dir().unwrap();
 
         let result = run_hook(&config_path, "proc-receive", &[]);
 
         assert_eq!(result.is_ok(), expect_success);
-        assert_eq!(env::current_dir().unwrap(), nested.canonicalize().unwrap());
+        assert_eq!(env::current_dir().unwrap(), invocation_dir);
     }
 
     #[test]

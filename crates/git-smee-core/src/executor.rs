@@ -156,6 +156,7 @@ mod tests {
         env,
         ffi::OsString,
         fs, io,
+        path::{Path, PathBuf},
         process::Command,
         sync::{Arc, Barrier, Mutex},
         time::Duration,
@@ -171,7 +172,8 @@ mod tests {
 
     use super::redaction::redact_command;
     use super::runner::{
-        apply_hook_arg_env, is_hook_arg_env_key, windows_cmd_quote_hook_arg, windows_command_script,
+        apply_hook_arg_env, cmd_compatible_path, is_hook_arg_env_key, windows_cmd_quote_hook_arg,
+        windows_command_script,
     };
     use super::scheduler::execute_command;
     use super::summary::{CommandOutcome, CommandRun};
@@ -371,6 +373,22 @@ mod tests {
         let script = windows_command_script("if \"%1\"==\"alpha\" exit /b 0");
 
         assert_eq!(script, "@echo off\r\nif \"%1\"==\"alpha\" exit /b 0\r\n");
+    }
+
+    #[test]
+    fn given_windows_verbatim_drive_path_when_normalizing_then_prefix_is_removed() {
+        assert_eq!(
+            cmd_compatible_path(Path::new(r"\\?\C:\repo")),
+            PathBuf::from(r"C:\repo")
+        );
+    }
+
+    #[test]
+    fn given_windows_verbatim_unc_path_when_normalizing_then_absolute_unc_is_preserved() {
+        assert_eq!(
+            cmd_compatible_path(Path::new(r"\\?\UNC\server\share\repo")),
+            PathBuf::from(r"\\server\share\repo")
+        );
     }
 
     #[test]

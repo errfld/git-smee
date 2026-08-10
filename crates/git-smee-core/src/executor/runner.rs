@@ -208,9 +208,16 @@ pub(super) fn cmd_compatible_current_dir() -> Result<Option<PathBuf>, std::io::E
     Ok((compatible != current_dir).then_some(compatible))
 }
 
-#[cfg(windows)]
-fn cmd_compatible_path(path: &Path) -> PathBuf {
+#[cfg(any(windows, test))]
+pub(super) fn cmd_compatible_path(path: &Path) -> PathBuf {
     let path = path.to_string_lossy();
+    const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
+    if path
+        .get(..VERBATIM_UNC_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(VERBATIM_UNC_PREFIX))
+    {
+        return PathBuf::from(format!(r"\\{}", &path[VERBATIM_UNC_PREFIX.len()..]));
+    }
     path.strip_prefix(r"\\?\")
         .map_or_else(|| PathBuf::from(path.as_ref()), PathBuf::from)
 }
