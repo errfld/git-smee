@@ -1066,6 +1066,33 @@ command = "echo from-invocation-config"
 }
 
 #[test]
+fn given_nested_directory_when_running_then_hook_command_uses_repository_root() {
+    let test_repo = common::TestRepo::default();
+    let nested_dir = test_repo.path.join("nested/deep");
+    fs::create_dir_all(&nested_dir).expect("failed to create nested invocation dir");
+    let command = if cfg!(windows) {
+        "echo repo-root> hook-cwd.txt"
+    } else {
+        "printf 'repo-root\\n' > hook-cwd.txt"
+    };
+    test_repo.write_config(&format!("[[pre-commit]]\ncommand = {command:?}\n"));
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&nested_dir)
+        .args(["run", "pre-commit"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(test_repo.path.join("hook-cwd.txt"))
+            .unwrap()
+            .trim(),
+        "repo-root"
+    );
+    assert!(!nested_dir.join("hook-cwd.txt").exists());
+}
+
+#[test]
 fn given_successful_hook_when_running_then_cli_stdout_contains_hook_output_and_summary() {
     let test_repo = common::TestRepo::default();
     let command = if cfg!(windows) {
@@ -1400,12 +1427,14 @@ command = "exit 1"
 fn given_bare_repo_when_running_then_hook_executes() {
     let bare_repo = TempDir::new().expect("failed to create bare repo temp dir");
     git2::Repository::init_bare(bare_repo.path()).expect("failed to init bare repo");
+    let command = if cfg!(windows) {
+        "echo bare-root> bare-cwd.txt"
+    } else {
+        "printf 'bare-root\\n' > bare-cwd.txt"
+    };
     fs::write(
         bare_repo.path().join(".git-smee.toml"),
-        r#"
-[[pre-receive]]
-command = "echo bare-run"
-"#,
+        format!("[[pre-receive]]\ncommand = {command:?}\n"),
     )
     .expect("failed to write config");
 
@@ -1414,6 +1443,70 @@ command = "echo bare-run"
         .args(["run", "pre-receive"])
         .assert()
         .success();
+
+    assert_eq!(
+        fs::read_to_string(bare_repo.path().join("bare-cwd.txt"))
+            .unwrap()
+            .trim(),
+        "bare-root"
+    );
+}
+
+#[test]
+fn given_linked_worktree_when_running_then_hook_command_uses_linked_worktree_root() {
+    let test_repo = common::TestRepo::default();
+    let command = if cfg!(windows) {
+        "echo linked-root> linked-cwd.txt"
+    } else {
+        "printf 'linked-root\\n' > linked-cwd.txt"
+    };
+    test_repo.write_config(&format!("[[pre-commit]]\ncommand = {command:?}\n"));
+
+    let repository = git2::Repository::open(&test_repo.path).unwrap();
+    let mut index = repository.index().unwrap();
+    index
+        .add_path(Path::new(".git-smee.toml"))
+        .expect("failed to stage config");
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repository.find_tree(tree_id).unwrap();
+    let signature = git2::Signature::now("git-smee test", "git-smee@example.invalid").unwrap();
+    repository
+        .commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "linked worktree fixture",
+            &tree,
+            &[],
+        )
+        .unwrap();
+
+    let worktree_parent = TempDir::new().expect("failed to create worktree parent");
+    let linked_root = worktree_parent.path().join("linked");
+    let status = StdCommand::new("git")
+        .current_dir(&test_repo.path)
+        .args(["worktree", "add", "--detach"])
+        .arg(&linked_root)
+        .status()
+        .expect("failed to create linked worktree");
+    assert!(status.success(), "git worktree add failed with {status}");
+    let nested_dir = linked_root.join("nested");
+    fs::create_dir(&nested_dir).unwrap();
+
+    Command::new(cargo::cargo_bin!("git-smee"))
+        .current_dir(&nested_dir)
+        .args(["run", "pre-commit"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(linked_root.join("linked-cwd.txt"))
+            .unwrap()
+            .trim(),
+        "linked-root"
+    );
+    assert!(!test_repo.path.join("linked-cwd.txt").exists());
 }
 
 #[test]

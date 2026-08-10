@@ -18,12 +18,22 @@ pub(crate) fn run_hook(
     hook: &str,
     hook_args: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    repository::ensure_in_repo_root()?;
+    let repository_root = repository::find_git_root()?;
     let phase = LifeCyclePhase::from_str(hook)?;
     let stdin_payload = read_hook_stdin_for_phase(phase)?;
-    let config = read_config_file(config_path)?;
-    let summary =
-        executor::execute_hook_with_summary(&config, phase, hook_args, stdin_payload.as_deref())?;
+    let config_path = if config_path.is_relative() {
+        repository_root.join(config_path)
+    } else {
+        config_path.to_path_buf()
+    };
+    let config = read_config_file(&config_path)?;
+    let summary = executor::execute_hook_with_summary_in_directory(
+        &config,
+        phase,
+        &repository_root,
+        hook_args,
+        stdin_payload.as_deref(),
+    )?;
     for line in summary.text_lines(phase) {
         println!("{line}");
     }
@@ -94,7 +104,62 @@ fn stdin_sentinel_read_limit(max_hook_stdin_bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::{LazyLock, Mutex},
+    };
+
+    use tempfile::tempdir;
+
     use super::*;
+
+    static CURRENT_DIR_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct CurrentDirGuard(PathBuf);
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            env::set_current_dir(&self.0).expect("failed to restore current directory");
+        }
+    }
+
+    fn assert_run_hook_preserves_current_dir(command: &str, expect_success: bool) {
+        let _lock = CURRENT_DIR_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let repo = tempdir().unwrap();
+        git2::Repository::init(repo.path()).unwrap();
+        let nested = repo.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        let config_path = repo.path().join("config.toml");
+        fs::write(
+            &config_path,
+            format!("[[proc-receive]]\ncommand = {command:?}\n"),
+        )
+        .unwrap();
+
+        let original_dir = env::current_dir().unwrap();
+        let _current_dir_guard = CurrentDirGuard(original_dir);
+        env::set_current_dir(&nested).unwrap();
+
+        let result = run_hook(&config_path, "proc-receive", &[]);
+
+        assert_eq!(result.is_ok(), expect_success);
+        assert_eq!(env::current_dir().unwrap(), nested.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn successful_run_preserves_callers_current_directory() {
+        let command = if cfg!(windows) { "exit /b 0" } else { "true" };
+        assert_run_hook_preserves_current_dir(command, true);
+    }
+
+    #[test]
+    fn failed_run_preserves_callers_current_directory() {
+        let command = if cfg!(windows) { "exit /b 9" } else { "exit 9" };
+        assert_run_hook_preserves_current_dir(command, false);
+    }
 
     #[test]
     fn default_limit_uses_human_readable_display() {
