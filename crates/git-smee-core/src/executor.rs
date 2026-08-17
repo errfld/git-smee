@@ -9,9 +9,66 @@ mod summary;
 
 use crate::{SmeeConfig, config::LifeCyclePhase, platform::Platform};
 
-use runner::{CommandRunner, PlatformCommandRunner, WorkingDirectory};
-use scheduler::{run_hooks_with_runner, run_hooks_with_runner_with_summary};
+use runner::{CommandRunner, PlatformCommandRunner};
+use scheduler::run_hooks_with_runner_with_summary;
 pub use summary::{CommandPhase, CommandRun, HookRunSummary};
+
+/// Controls where hook child processes run.
+#[derive(Clone, Copy, Debug)]
+pub enum WorkingDirectory<'a> {
+    /// Inherit the current process working directory.
+    Inherited,
+    /// Run hook child processes from the given directory.
+    Explicit(&'a Path),
+}
+
+/// Typed inputs for one hook execution.
+#[derive(Debug)]
+pub struct ExecutionOptions<'a> {
+    phase: LifeCyclePhase,
+    platform: Platform,
+    working_directory: WorkingDirectory<'a>,
+    hook_args: &'a [String],
+    stdin_payload: Option<&'a [u8]>,
+}
+
+impl<'a> ExecutionOptions<'a> {
+    /// Creates options for `phase` using the current platform, inherited working
+    /// directory, no hook arguments, and inherited stdin.
+    pub fn new(phase: LifeCyclePhase) -> Self {
+        Self {
+            phase,
+            platform: Platform::current(),
+            working_directory: WorkingDirectory::Inherited,
+            hook_args: &[],
+            stdin_payload: None,
+        }
+    }
+
+    /// Selects the platform-specific command runner behavior.
+    pub fn with_platform(mut self, platform: Platform) -> Self {
+        self.platform = platform;
+        self
+    }
+
+    /// Selects the hook child-process working-directory policy.
+    pub fn with_working_directory(mut self, working_directory: WorkingDirectory<'a>) -> Self {
+        self.working_directory = working_directory;
+        self
+    }
+
+    /// Supplies positional arguments forwarded to every hook command.
+    pub fn with_hook_args(mut self, hook_args: &'a [String]) -> Self {
+        self.hook_args = hook_args;
+        self
+    }
+
+    /// Supplies the optional buffered stdin payload replayed to every hook command.
+    pub fn with_stdin_payload(mut self, stdin_payload: Option<&'a [u8]>) -> Self {
+        self.stdin_payload = stdin_payload;
+        self
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -47,13 +104,10 @@ pub fn execute_hook_with_args_and_stdin(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    execute_hook_with_platform_and_args_and_stdin(
-        smee_config,
-        phase,
-        Platform::current(),
-        hook_args,
-        stdin_payload,
-    )
+    let options = ExecutionOptions::new(phase)
+        .with_hook_args(hook_args)
+        .with_stdin_payload(stdin_payload);
+    without_summary(execute_hook_with_options(smee_config, options))
 }
 
 pub fn execute_hook_with_summary(
@@ -62,12 +116,10 @@ pub fn execute_hook_with_summary(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<HookRunSummary, Error> {
-    let platform = Platform::current();
-    let runner = PlatformCommandRunner {
-        platform: &platform,
-        working_directory: WorkingDirectory::Inherited,
-    };
-    execute_hook_with_runner_and_summary(smee_config, phase, &runner, hook_args, stdin_payload)
+    let options = ExecutionOptions::new(phase)
+        .with_hook_args(hook_args)
+        .with_stdin_payload(stdin_payload);
+    execute_hook_with_options(smee_config, options)
 }
 
 /// Executes a hook and captures its summary with every child command rooted at
@@ -79,12 +131,11 @@ pub fn execute_hook_with_summary_in_directory(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<HookRunSummary, Error> {
-    let platform = Platform::current();
-    let runner = PlatformCommandRunner {
-        platform: &platform,
-        working_directory: WorkingDirectory::Explicit(working_directory),
-    };
-    execute_hook_with_runner_and_summary(smee_config, phase, &runner, hook_args, stdin_payload)
+    let options = ExecutionOptions::new(phase)
+        .with_working_directory(WorkingDirectory::Explicit(working_directory))
+        .with_hook_args(hook_args)
+        .with_stdin_payload(stdin_payload);
+    execute_hook_with_options(smee_config, options)
 }
 
 pub fn execute_hook_with_platform(
@@ -111,13 +162,33 @@ pub fn execute_hook_with_platform_and_args_and_stdin(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    let runner = PlatformCommandRunner {
-        platform: &platform,
-        working_directory: WorkingDirectory::Inherited,
-    };
-    execute_hook_with_runner(smee_config, phase, &runner, hook_args, stdin_payload)
+    let options = ExecutionOptions::new(phase)
+        .with_platform(platform)
+        .with_hook_args(hook_args)
+        .with_stdin_payload(stdin_payload);
+    without_summary(execute_hook_with_options(smee_config, options))
 }
 
+/// Executes a hook through the canonical typed options boundary and captures a
+/// summary of every attempted command.
+pub fn execute_hook_with_options(
+    smee_config: &SmeeConfig,
+    options: ExecutionOptions<'_>,
+) -> Result<HookRunSummary, Error> {
+    let runner = PlatformCommandRunner {
+        platform: &options.platform,
+        working_directory: options.working_directory,
+    };
+    execute_hook_with_runner_and_summary(
+        smee_config,
+        options.phase,
+        &runner,
+        options.hook_args,
+        options.stdin_payload,
+    )
+}
+
+#[cfg(test)]
 fn execute_hook_with_runner<R: CommandRunner>(
     smee_config: &SmeeConfig,
     phase: LifeCyclePhase,
@@ -125,10 +196,36 @@ fn execute_hook_with_runner<R: CommandRunner>(
     hook_args: &[String],
     stdin_payload: Option<&[u8]>,
 ) -> Result<(), Error> {
-    match smee_config.hooks_for(phase) {
-        None => Err(Error::NoHooksConfigured(phase)),
-        Some(hooks) => run_hooks_with_runner(hooks, runner, hook_args, stdin_payload),
+    without_summary(execute_hook_with_runner_and_summary(
+        smee_config,
+        phase,
+        runner,
+        hook_args,
+        stdin_payload,
+    ))
+}
+
+fn without_summary(result: Result<HookRunSummary, Error>) -> Result<(), Error> {
+    let summary = result?;
+    match summary.error() {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
+}
+
+#[cfg(test)]
+fn run_hooks_with_runner<R: CommandRunner>(
+    hooks: &[crate::config::HookDefinition],
+    runner: &R,
+    hook_args: &[String],
+    stdin_payload: Option<&[u8]>,
+) -> Result<(), Error> {
+    without_summary(Ok(run_hooks_with_runner_with_summary(
+        hooks,
+        runner,
+        hook_args,
+        stdin_payload,
+    )))
 }
 
 fn execute_hook_with_runner_and_summary<R: CommandRunner>(
@@ -284,6 +381,84 @@ mod tests {
             result,
             Err(Error::NoHooksConfigured(LifeCyclePhase::PreCommit))
         ));
+    }
+
+    #[test]
+    fn given_new_execution_options_when_inspecting_then_defaults_are_explicit() {
+        let options = ExecutionOptions::new(LifeCyclePhase::PreCommit);
+
+        assert_eq!(options.phase, LifeCyclePhase::PreCommit);
+        assert_eq!(options.platform, Platform::current());
+        assert!(matches!(
+            options.working_directory,
+            WorkingDirectory::Inherited
+        ));
+        assert!(options.hook_args.is_empty());
+        assert!(options.stdin_payload.is_none());
+    }
+
+    #[test]
+    fn given_execution_option_builders_when_inspecting_then_every_input_is_owned_by_options() {
+        let working_directory = Path::new("explicit-repository");
+        let hook_args = vec!["COMMIT_EDITMSG".to_string()];
+        let stdin_payload = b"old object new object\n";
+
+        let options = ExecutionOptions::new(LifeCyclePhase::PreReceive)
+            .with_platform(Platform::Windows)
+            .with_working_directory(WorkingDirectory::Explicit(working_directory))
+            .with_hook_args(&hook_args)
+            .with_stdin_payload(Some(stdin_payload));
+
+        assert_eq!(options.phase, LifeCyclePhase::PreReceive);
+        assert_eq!(options.platform, Platform::Windows);
+        assert!(matches!(
+            options.working_directory,
+            WorkingDirectory::Explicit(path) if path == working_directory
+        ));
+        assert_eq!(options.hook_args, hook_args);
+        assert_eq!(options.stdin_payload, Some(stdin_payload.as_slice()));
+    }
+
+    #[test]
+    fn given_non_default_execution_options_when_executing_then_inputs_reach_child() {
+        let working_directory = tempfile::tempdir().unwrap();
+        let command = if cfg!(windows) {
+            "(echo %1)> hook-args.txt & more > hook-stdin.txt"
+        } else {
+            "printf '%s' \"$1\" > hook-args.txt; cat > hook-stdin.txt"
+        };
+        let mut hooks_map = HashMap::new();
+        hooks_map.insert(
+            LifeCyclePhase::PreReceive,
+            vec![HookDefinition {
+                command: command.try_into().unwrap(),
+                parallel_execution_allowed: false,
+            }],
+        );
+        let config = SmeeConfig::try_new(hooks_map).unwrap();
+        let hook_args = vec!["forwarded-arg".to_string()];
+        let stdin_payload = b"forwarded-stdin\n";
+        let options = ExecutionOptions::new(LifeCyclePhase::PreReceive)
+            .with_platform(Platform::current())
+            .with_working_directory(WorkingDirectory::Explicit(working_directory.path()))
+            .with_hook_args(&hook_args)
+            .with_stdin_payload(Some(stdin_payload));
+
+        let summary = execute_hook_with_options(&config, options).unwrap();
+
+        assert!(summary.error().is_none());
+        assert_eq!(
+            fs::read_to_string(working_directory.path().join("hook-args.txt"))
+                .unwrap()
+                .trim(),
+            "forwarded-arg"
+        );
+        assert_eq!(
+            fs::read_to_string(working_directory.path().join("hook-stdin.txt"))
+                .unwrap()
+                .trim(),
+            "forwarded-stdin"
+        );
     }
 
     #[test]

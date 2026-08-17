@@ -27,13 +27,11 @@ pub(crate) fn run_hook(
         config_path.to_path_buf()
     };
     let config = read_config_file(&config_path)?;
-    let summary = executor::execute_hook_with_summary_in_directory(
-        &config,
-        phase,
-        &repository_root,
-        hook_args,
-        stdin_payload.as_deref(),
-    )?;
+    let execution = executor::ExecutionOptions::new(phase)
+        .with_working_directory(executor::WorkingDirectory::Explicit(&repository_root))
+        .with_hook_args(hook_args)
+        .with_stdin_payload(stdin_payload.as_deref());
+    let summary = executor::execute_hook_with_options(&config, execution)?;
     for line in summary.text_lines(phase) {
         println!("{line}");
     }

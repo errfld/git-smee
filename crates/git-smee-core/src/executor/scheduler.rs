@@ -9,25 +9,14 @@ use rayon::prelude::*;
 use crate::config::{HookCommand, HookDefinition};
 
 use super::{
-    Error,
     runner::CommandRunner,
     summary::{CommandOutcome, CommandPhase, CommandRun, HookRunSummary},
 };
 
-type IndexedHook<'a> = (usize, &'a HookDefinition);
+#[cfg(test)]
+use super::Error;
 
-pub(super) fn run_hooks_with_runner<R: CommandRunner>(
-    hooks: &[HookDefinition],
-    runner: &R,
-    hook_args: &[String],
-    stdin_payload: Option<&[u8]>,
-) -> Result<(), Error> {
-    let summary = run_hooks_with_runner_with_summary(hooks, runner, hook_args, stdin_payload);
-    match summary.error() {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
-}
+type IndexedHook<'a> = (usize, &'a HookDefinition);
 
 pub(super) fn run_hooks_with_runner_with_summary<R: CommandRunner>(
     hooks: &[HookDefinition],
