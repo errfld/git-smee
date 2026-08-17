@@ -11,6 +11,8 @@ use std::os::windows::process::CommandExt;
 
 use crate::{config::HookCommand, platform::Platform};
 
+use super::WorkingDirectory;
+
 pub(super) trait CommandRunner: Sync {
     fn run(
         &self,
@@ -24,12 +26,6 @@ pub(super) trait CommandRunner: Sync {
 pub(super) struct PlatformCommandRunner<'a> {
     pub(super) platform: &'a Platform,
     pub(super) working_directory: WorkingDirectory<'a>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum WorkingDirectory<'a> {
-    Inherited,
-    Explicit(&'a Path),
 }
 
 impl CommandRunner for PlatformCommandRunner<'_> {
