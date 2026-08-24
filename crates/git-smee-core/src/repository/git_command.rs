@@ -215,6 +215,10 @@ mod tests {
         let repository = temp_dir.path().join("repository");
         fs::create_dir(&repository).unwrap();
         test_support::git(&repository, &["init"]);
+        test_support::git(
+            &repository,
+            &["config", "core.hooksPath", ".repository-hooks"],
+        );
 
         let original_git_dir = env::var_os("GIT_DIR");
         let original_git_work_tree = env::var_os("GIT_WORK_TREE");
@@ -232,6 +236,9 @@ mod tests {
             None => unsafe { env::remove_var("GIT_WORK_TREE") },
         }
 
-        assert!(matches!(result, Ok(GitCommandResult::Success(_))));
+        assert_eq!(
+            result.unwrap(),
+            GitCommandResult::Success(b".repository-hooks\n".to_vec())
+        );
     }
 }
