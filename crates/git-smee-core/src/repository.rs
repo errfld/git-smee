@@ -2,9 +2,12 @@ use std::{
     env,
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus},
 };
 use thiserror::Error;
+
+mod git_command;
+
+use git_command::{GitClient, GitCommandResult, RealGitClient};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -40,15 +43,19 @@ pub enum Error {
 ///
 /// ```rust
 /// use git_smee_core::find_git_root;
-/// use std::{env, process::Command};
+/// use std::{env, fs};
 /// use tempfile::tempdir;
 ///
 /// let temp_dir = tempdir().unwrap();
-/// Command::new("git")
-///     .arg("init")
-///     .current_dir(temp_dir.path())
-///     .output()
-///     .unwrap();
+/// let git_dir = temp_dir.path().join(".git");
+/// fs::create_dir_all(git_dir.join("objects")).unwrap();
+/// fs::create_dir_all(git_dir.join("refs").join("heads")).unwrap();
+/// fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+/// fs::write(
+///     git_dir.join("config"),
+///     "[core]\nrepositoryformatversion = 0\nbare = false\n",
+/// )
+/// .unwrap();
 /// let nested = temp_dir.path().join("nested");
 /// std::fs::create_dir(&nested).unwrap();
 ///
@@ -177,101 +184,6 @@ fn git_path_bytes_to_optional_path(bytes: &[u8], flag: &str) -> Result<Option<Pa
     git_output_path_to_path_buf(trimmed, flag).map(Some)
 }
 
-trait GitClient {
-    fn rev_parse_bool(
-        &self,
-        current_dir: &Path,
-        flag: &str,
-    ) -> Result<GitCommandResult<bool>, Error>;
-
-    fn rev_parse_path_bytes(
-        &self,
-        current_dir: &Path,
-        flag: &str,
-    ) -> Result<GitCommandResult<Vec<u8>>, Error>;
-
-    fn git_path_bytes(
-        &self,
-        repository_root: &Path,
-        git_path: &str,
-    ) -> Result<GitCommandResult<Vec<u8>>, Error>;
-}
-
-struct RealGitClient;
-
-impl GitClient for RealGitClient {
-    fn rev_parse_bool(
-        &self,
-        current_dir: &Path,
-        flag: &str,
-    ) -> Result<GitCommandResult<bool>, Error> {
-        match run_git_command(git_rev_parse_command(current_dir, flag))? {
-            GitCommandResult::Success(stdout) => Ok(GitCommandResult::Success(
-                String::from_utf8_lossy(&stdout).trim() == "true",
-            )),
-            GitCommandResult::Failure(failure) => Ok(GitCommandResult::Failure(failure)),
-        }
-    }
-
-    fn rev_parse_path_bytes(
-        &self,
-        current_dir: &Path,
-        flag: &str,
-    ) -> Result<GitCommandResult<Vec<u8>>, Error> {
-        run_git_command(git_rev_parse_command(current_dir, flag))
-    }
-
-    fn git_path_bytes(
-        &self,
-        repository_root: &Path,
-        git_path: &str,
-    ) -> Result<GitCommandResult<Vec<u8>>, Error> {
-        let mut command = git_command_with_explicit_repo(repository_root);
-        command.arg("rev-parse").arg("--git-path").arg(git_path);
-        run_git_command(command)
-    }
-}
-
-fn git_rev_parse_command(current_dir: &Path, flag: &str) -> Command {
-    let mut command = Command::new("git");
-    command.current_dir(current_dir).arg("rev-parse").arg(flag);
-    command
-}
-
-fn run_git_command(mut command: Command) -> Result<GitCommandResult<Vec<u8>>, Error> {
-    let output = command.output().map_err(Error::FailedToExecuteGit)?;
-
-    if !output.status.success() {
-        return Ok(GitCommandResult::Failure(GitCommandFailure::from_output(
-            &output.stderr,
-            output.status,
-        )));
-    }
-
-    Ok(GitCommandResult::Success(output.stdout))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum GitCommandResult<T> {
-    Success(T),
-    Failure(GitCommandFailure),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GitCommandFailure {
-    status_code: Option<i32>,
-    stderr: String,
-}
-
-impl GitCommandFailure {
-    fn from_output(stderr: &[u8], status: ExitStatus) -> Self {
-        Self {
-            status_code: status.code(),
-            stderr: stderr_or_status(stderr, status.code()),
-        }
-    }
-}
-
 fn should_treat_rev_parse_failure_as_not_in_repository(
     current_dir: &Path,
     status_code: Option<i32>,
@@ -292,18 +204,6 @@ fn has_git_repository_context(current_dir: &Path) -> bool {
     })
 }
 
-fn stderr_or_status(stderr: &[u8], status_code: Option<i32>) -> String {
-    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
-    if stderr.is_empty() {
-        match status_code {
-            Some(code) => format!("git exited with status {code}"),
-            None => "git terminated by signal".to_string(),
-        }
-    } else {
-        stderr
-    }
-}
-
 fn trim_git_output_path(bytes: &[u8]) -> &[u8] {
     let mut end = bytes.len();
     while end > 0 && (bytes[end - 1] == b'\n' || bytes[end - 1] == b'\r') {
@@ -318,15 +218,19 @@ fn trim_git_output_path(bytes: &[u8]) -> &[u8] {
 ///
 /// ```rust
 /// use git_smee_core::ensure_in_repo_root;
-/// use std::{env, process::Command};
+/// use std::{env, fs};
 /// use tempfile::tempdir;
 ///
 /// let temp_dir = tempdir().unwrap();
-/// Command::new("git")
-///     .arg("init")
-///     .current_dir(temp_dir.path())
-///     .output()
-///     .unwrap();
+/// let git_dir = temp_dir.path().join(".git");
+/// fs::create_dir_all(git_dir.join("objects")).unwrap();
+/// fs::create_dir_all(git_dir.join("refs").join("heads")).unwrap();
+/// fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+/// fs::write(
+///     git_dir.join("config"),
+///     "[core]\nrepositoryformatversion = 0\nbare = false\n",
+/// )
+/// .unwrap();
 /// let nested = temp_dir.path().join("nested");
 /// std::fs::create_dir(&nested).unwrap();
 ///
@@ -411,21 +315,6 @@ fn git_output_path_to_path_buf(bytes: &[u8], flag: &str) -> Result<PathBuf, Erro
     }
 }
 
-fn git_command_with_explicit_repo(repository_root: &Path) -> Command {
-    let mut command = Command::new("git");
-    command.arg("-C").arg(repository_root);
-    for env_name in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_COMMON_DIR",
-    ] {
-        command.env_remove(env_name);
-    }
-    command
-}
-
 /// Resolves the effective hooks directory used by Git for the repository.
 pub fn resolve_hooks_path(repository_root: &Path) -> Result<PathBuf, Error> {
     resolve_git_path(repository_root, "hooks")
@@ -471,6 +360,64 @@ mod tests {
         assert_eq!(result, repo_root.join(".githooks "));
     }
 
+    #[test]
+    fn given_fake_git_client_when_finding_bare_repository_then_returns_git_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let bare_repo = temp_dir.path().join("remote.git");
+        fs::create_dir(&bare_repo).unwrap();
+        let git = FakeGitClient::new()
+            .with_bool("--is-inside-work-tree", false)
+            .with_bool("--is-inside-git-dir", true)
+            .with_path("--absolute-git-dir", path_bytes(&bare_repo))
+            .with_bool("--is-bare-repository", true);
+
+        let result = find_git_root_with_client(&git, &bare_repo).unwrap();
+
+        assert_eq!(result, bare_repo.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn given_status_128_without_repository_context_then_failure_means_not_in_repository() {
+        let temp_dir = TempDir::new().unwrap();
+        let git = FakeGitClient::new()
+            .with_bool_failure("--is-inside-work-tree", 128, "not a repository")
+            .with_bool("--is-inside-git-dir", false)
+            .with_bool("--is-bare-repository", false);
+
+        let result = find_git_root_with_client(&git, temp_dir.path());
+
+        assert!(matches!(result, Err(Error::NotInGitRepository)));
+    }
+
+    #[test]
+    fn given_status_128_with_repository_context_then_failure_is_preserved() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::create_dir(temp_dir.path().join(".git")).unwrap();
+        let git = FakeGitClient::new().with_bool_failure(
+            "--is-inside-work-tree",
+            128,
+            "malformed repository",
+        );
+
+        let result = find_git_root_with_client(&git, temp_dir.path());
+
+        assert!(matches!(
+            result,
+            Err(Error::FailedToQueryGitRevParse { flag, stderr })
+                if flag == "--is-inside-work-tree" && stderr == "malformed repository"
+        ));
+    }
+
+    #[test]
+    fn given_fake_git_client_when_git_path_is_empty_then_returns_domain_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let git = FakeGitClient::new().with_git_path("hooks", b"\r\n".to_vec());
+
+        let result = resolve_git_path_with_client(&git, temp_dir.path(), "hooks");
+
+        assert!(matches!(result, Err(Error::EmptyGitPath { .. })));
+    }
+
     #[derive(Default)]
     struct FakeGitClient {
         bools: HashMap<String, GitCommandResult<bool>>,
@@ -486,6 +433,17 @@ mod tests {
         fn with_bool(mut self, flag: &str, value: bool) -> Self {
             self.bools
                 .insert(flag.to_string(), GitCommandResult::Success(value));
+            self
+        }
+
+        fn with_bool_failure(mut self, flag: &str, status_code: i32, stderr: &str) -> Self {
+            self.bools.insert(
+                flag.to_string(),
+                GitCommandResult::Failure(git_command::GitCommandFailure {
+                    status_code: Some(status_code),
+                    stderr: stderr.to_string(),
+                }),
+            );
             self
         }
 
@@ -946,30 +904,11 @@ mod tests {
     }
 
     fn git(repo: &Path, args: &[&str]) {
-        let output = git_command_with_explicit_repo(repo)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
+        git_command::test_support::git(repo, args);
     }
 
     fn git_output(repo: &Path, args: &[&str]) -> String {
-        let output = git_command_with_explicit_repo(repo)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
+        git_command::test_support::git_output(repo, args)
     }
 
     fn normalize_path_for_compare(path: &Path) -> String {
@@ -1013,36 +952,5 @@ mod tests {
             "@echo off\r\necho fatal: no es un repositorio git 1>&2\r\nexit /b 128\r\n",
         )
         .unwrap();
-    }
-
-    #[test]
-    fn given_explicit_repo_git_helper_when_git_dir_env_is_contaminated_then_it_ignores_it() {
-        let _guard = process_state_lock();
-        let temp_dir = TempDir::new().unwrap();
-        let bare_repo = temp_dir.path().join("remote.git");
-        fs::create_dir(&bare_repo).unwrap();
-        git(&bare_repo, &["init", "--bare"]);
-
-        let repo = temp_dir.path().join("repo");
-        fs::create_dir(&repo).unwrap();
-        git(&repo, &["init"]);
-
-        let original_git_dir = env::var_os("GIT_DIR");
-        let original_git_work_tree = env::var_os("GIT_WORK_TREE");
-        unsafe { env::set_var("GIT_DIR", bare_repo.as_os_str()) };
-        unsafe { env::remove_var("GIT_WORK_TREE") };
-
-        let hooks_path = resolve_hooks_path(&repo).unwrap();
-
-        match original_git_dir {
-            Some(value) => unsafe { env::set_var("GIT_DIR", value) },
-            None => unsafe { env::remove_var("GIT_DIR") },
-        }
-        match original_git_work_tree {
-            Some(value) => unsafe { env::set_var("GIT_WORK_TREE", value) },
-            None => unsafe { env::remove_var("GIT_WORK_TREE") },
-        }
-
-        assert_eq!(hooks_path, repo.join(".git").join("hooks"));
     }
 }
